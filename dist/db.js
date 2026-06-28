@@ -32,6 +32,7 @@ exports.isVoucherExpired = isVoucherExpired;
 exports.deleteMacAssociation = deleteMacAssociation;
 exports.saveMacAssociation = saveMacAssociation;
 exports.findMacAssociation = findMacAssociation;
+exports.markVoucherExpired = markVoucherExpired;
 /**
  * SQLite database layer for SHIMBA WiFi.
  * Uses sql.js — a pure-JavaScript SQLite implementation that requires NO native compilation.
@@ -381,6 +382,12 @@ function isVoucherExpired(voucher) {
     const createdAt = new Date(voucher.created_at).getTime();
     const expiryTime = createdAt + maxDurationMs;
     return Date.now() > expiryTime;
+}
+
+/** Mark voucher as used/expired in the database */
+function markVoucherExpired(code) {
+    run(`UPDATE vouchers SET status = 'used', updated_at = ? WHERE code = ? AND status != 'used'`, [(0, utils_1.nowString)(), code.toUpperCase()]);
+    utils_1.logger.info('DB', `Voucher ${code} marked as used (expired)`);
 }
 
 /** Delete a MAC association (e.g. when the voucher has expired) */

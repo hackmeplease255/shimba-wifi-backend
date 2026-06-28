@@ -516,6 +516,15 @@ export function isVoucherExpired(voucher: { created_at: string; limit_uptime: st
   return Date.now() > expiryTime;
 }
 
+/** Mark voucher as used/expired in the database */
+export function markVoucherExpired(code: string): void {
+  run(
+    `UPDATE vouchers SET status = 'used', updated_at = ? WHERE code = ? AND status != 'used'`,
+    [nowString(), code.toUpperCase()]
+  );
+  logger.info('DB', `Voucher ${code} marked as used (expired)`);
+}
+
 /** Delete a MAC association (e.g. when the voucher has expired) */
 export function deleteMacAssociation(mac: string): void {
   const normalizedMac = mac.toUpperCase();

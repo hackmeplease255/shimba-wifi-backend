@@ -4,7 +4,7 @@ import { config, getPackage } from '../config';
 import {
   findOrderByReference, findOrdersByPhone,
   createOrder, updateOrderStatus, updateOrderVoucher,
-  createVoucher, markVoucherSynced, findVoucherByCode,
+  createVoucher, markVoucherSynced, findVoucherByCode, markVoucherExpired, isVoucherExpired,
   updateOrderSmsStatus, updateVoucherSmsStatus, logSms,
 } from '../db';
 import {
@@ -200,6 +200,26 @@ router.get('/api/voucher-status/:code', (req: Request, res: Response) => {
   const voucher = findVoucherByCode(code);
   if (!voucher) {
     return res.status(404).json({ success: false, message: 'Vocha haijapatikana' });
+  }
+
+  // Check if voucher has expired based on created_at + limit_uptime
+  if (isVoucherExpired(voucher)) {
+    // Mark as used in database so it won't be synced again
+    markVoucherExpired(code);
+    return res.json({
+      success: true,
+      status: 'expired',
+      message: 'Vocha yako muda wake umekwisha. Tafadhali nunua mpya.',
+      voucher: {
+        code: voucher.code,
+        synced: !!voucher.synced,
+        synced_at: voucher.synced_at || null,
+        package_name: voucher.package_name,
+        mikrotik_profile: voucher.mikrotik_profile,
+        status: 'expired',
+        sms_sent: !!voucher.sms_sent,
+      },
+    });
   }
 
   res.json({

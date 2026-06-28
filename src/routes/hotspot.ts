@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { config } from '../config';
 import {
   findVoucherByCode, upsertActiveUser, findActiveUser,
-  getRecentVouchers, markVoucherSynced,
+  getRecentVouchers, markVoucherSynced, markVoucherExpired,
   saveMacAssociation, findMacAssociation, isVoucherExpired, deleteMacAssociation,
 } from '../db';
 import { escapeRsc, nowIso, nowString, logger } from '../utils';
@@ -63,17 +63,26 @@ router.get('/api/session-status', (req: Request, res: Response) => {
 router.get(`/mikrotik-sync-${config.syncToken}.rsc`, (req: Request, res: Response) => {
   const recentVouchers = getRecentVouchers(config.dataRetentionDays);
 
-  // RouterOS 6.x has trouble parsing :if with nested brackets.
-  // Use simpler :do-on-error pattern instead.
-  // Each line: try to add the user; if it already exists, the error is silently ignored.
+  // Filter: expired vouchers are REMOVED from MikroTik, active ones are ADDED.
+  // This prevents users from reconnecting with an expired voucher.
   let script = '';
   for (const v of recentVouchers) {
     const code = escapeRsc(v.code);
-    const profile = escapeRsc(v.mikrotik_profile);
-    const limit = escapeRsc(v.limit_uptime);
-    const comment = escapeRsc(`SHIMBA ${v.package_name} ${v.order_reference}`);
-    script += `/ip hotspot user add name="${code}" password="${code}" profile="${profile}" limit-uptime="${limit}" comment="${comment}"
+
+    if (isVoucherExpired(v)) {
+      // Remove expired voucher from MikroTik and mark as used in DB
+      script += `/ip hotspot user remove [find name="${code}"]
 `;
+      markVoucherExpired(v.code);
+      // Note: MAC association cleanup is handled by auto-connect endpoint
+      logger.info('MikroTik', 'Expired voucher removed from sync script', { code: v.code });
+    } else {
+      const profile = escapeRsc(v.mikrotik_profile);
+      const limit = escapeRsc(v.limit_uptime);
+      const comment = escapeRsc(`SHIMBA ${v.package_name} ${v.order_reference}`);
+      script += `/ip hotspot user add name="${code}" password="${code}" profile="${profile}" limit-uptime="${limit}" comment="${comment}"
+`;
+    }
   }
 
   res.type('text/plain').send(script);

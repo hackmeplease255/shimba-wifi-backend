@@ -52,16 +52,26 @@ router.get('/api/session-status', (req, res) => {
  */
 router.get(`/mikrotik-sync-${config_1.config.syncToken}.rsc`, (req, res) => {
     const recentVouchers = (0, db_1.getRecentVouchers)(config_1.config.dataRetentionDays);
-    // RouterOS 6.x has trouble parsing :if with nested brackets.
-    // Use simpler pattern: try to add the user; if it already exists, the error is harmless.
+    // Filter: expired vouchers are REMOVED from MikroTik, active ones are ADDED.
+    // This prevents users from reconnecting with an expired voucher.
     let script = '';
     for (const v of recentVouchers) {
         const code = (0, utils_1.escapeRsc)(v.code);
-        const profile = (0, utils_1.escapeRsc)(v.mikrotik_profile);
-        const limit = (0, utils_1.escapeRsc)(v.limit_uptime);
-        const comment = (0, utils_1.escapeRsc)(`SHIMBA ${v.package_name} ${v.order_reference}`);
-        script += `/ip hotspot user add name="${code}" password="${code}" profile="${profile}" limit-uptime="${limit}" comment="${comment}"
+        if ((0, db_1.isVoucherExpired)(v)) {
+            // Remove expired voucher from MikroTik and mark as used in DB
+            script += `/ip hotspot user remove [find name="${code}"]
 `;
+            (0, db_1.markVoucherExpired)(v.code);
+            // Note: MAC association cleanup is handled by auto-connect endpoint
+            utils_1.logger.info('MikroTik', 'Expired voucher removed from sync script', { code: v.code });
+        }
+        else {
+            const profile = (0, utils_1.escapeRsc)(v.mikrotik_profile);
+            const limit = (0, utils_1.escapeRsc)(v.limit_uptime);
+            const comment = (0, utils_1.escapeRsc)(`SHIMBA ${v.package_name} ${v.order_reference}`);
+            script += `/ip hotspot user add name="${code}" password="${code}" profile="${profile}" limit-uptime="${limit}" comment="${comment}"
+`;
+        }
     }
     res.type('text/plain').send(script);
 });
