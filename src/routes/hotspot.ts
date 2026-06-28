@@ -285,7 +285,7 @@ router.get('/api/auto-connect', (req: Request, res: Response) => {
 
 /* ── Associate a MAC address with a voucher code ── */
 router.post('/api/associate-mac', (req: Request, res: Response) => {
-  const { mac, code } = req.body || {};
+  const { mac, code, ip } = req.body || {};
   if (!mac || !code) {
     return res.json({ success: false });
   }
@@ -295,8 +295,16 @@ router.post('/api/associate-mac', (req: Request, res: Response) => {
     return res.json({ success: false });
   }
 
-  saveMacAssociation(String(mac).trim().toUpperCase(), voucher.code, voucher.package_name);
-  logger.info('Hotspot', 'MAC associated with voucher', { mac: String(mac).trim().toUpperCase(), code: voucher.code });
+  const normalizedMac = String(mac).trim().toUpperCase();
+  const clientIp = String(ip || '').trim();
+
+  // Save MAC→voucher association (for auto-connect on return)
+  saveMacAssociation(normalizedMac, voucher.code, voucher.package_name);
+
+  // Also record the login in active_users so the admin panel sees it
+  upsertActiveUser(voucher.code, voucher.code, normalizedMac, clientIp, voucher.package_name);
+
+  logger.info('Hotspot', 'MAC associated with voucher + user logged in', { mac: normalizedMac, code: voucher.code, ip: clientIp });
   res.json({ success: true });
 });
 
