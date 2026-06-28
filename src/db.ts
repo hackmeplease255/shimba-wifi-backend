@@ -275,6 +275,7 @@ function initTables(): void {
     'CREATE INDEX IF NOT EXISTS idx_orders_phone ON payment_orders(phone)',
     'CREATE INDEX IF NOT EXISTS idx_vouchers_code ON vouchers(code)',
     'CREATE INDEX IF NOT EXISTS idx_vouchers_phone ON vouchers(phone)',
+    'CREATE INDEX IF NOT EXISTS idx_active_users_mac ON active_users(mac)',
   ];
   for (const idx of indexes) {
     try { db.run(idx); } catch { /* index already exists */ }
