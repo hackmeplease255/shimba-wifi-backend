@@ -535,6 +535,44 @@ export function deleteMacAssociation(mac: string): void {
   }
 }
 
+/* ── Connected Users (real-time active sessions) ── */
+
+/** Get users currently connected (last_event='login' within last 10 minutes) */
+export function getConnectedUsers(): ActiveUser[] {
+  const freshAfter = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const rows = queryAll(
+    "SELECT * FROM active_users WHERE last_event = 'login' AND login_at >= ? ORDER BY login_at DESC",
+    [freshAfter]
+  );
+  return rows.map((r: any) => ({
+    id: r.id, user: r.user, code: r.code,
+    mac: r.mac || '', ip: r.ip || '',
+    package_name: r.package_name || '',
+    login_at: r.login_at || '',
+    last_event: r.last_event, updated_at: r.updated_at,
+  }));
+}
+
+/** Get total count of unique connected users in last hour */
+export function getConnectedUsersCount(): number {
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const row = queryOne(
+    "SELECT COUNT(DISTINCT mac) as c FROM active_users WHERE last_event = 'login' AND login_at >= ?",
+    [hourAgo]
+  );
+  return row?.c || 0;
+}
+
+/* ── Clear all data (for reset) ── */
+
+export function clearAllData(): void {
+  const tables = ['payment_orders', 'vouchers', 'sms_logs', 'active_users', 'webhook_events'];
+  for (const table of tables) {
+    run(`DELETE FROM ${table}`);
+  }
+  logger.info('DB', 'All data cleared (all tables)');
+}
+
 /* ── Cleanup ── */
 
 export function cleanupOldData(retentionDays: number): void {

@@ -1,10 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { adminAuth, loginHandler } from '../middleware/auth';
 import { adminLimiter } from '../middleware/rateLimiter';
-import { getAllOrders, getStats, queryAll, createOrder, createVoucher, findVoucherByCode, updateOrderVoucher, markVoucherSynced } from '../db';
+import {
+  getAllOrders, getStats, queryAll,
+  createOrder, createVoucher, findVoucherByCode, updateOrderVoucher, markVoucherSynced,
+  getConnectedUsers, getConnectedUsersCount, clearAllData,
+} from '../db';
 import { validateOrderRef } from '../middleware/validation';
 import { issueVoucherForOrder } from './payments';
-import { getPackage, isValidPackage } from '../config';
+import { getPackage, isValidPackage, config } from '../config';
 import { nowString, makeOrderReference, generateVoucherCode, normalizePhone, isValidPhone, logger } from '../utils';
 import { pushVoucher } from '../mikrotik';
 
@@ -50,6 +54,48 @@ router.post('/api/admin/complete-order', adminAuth, validateOrderRef, async (req
   } catch (e: any) {
     res.status(500).json({ success: false, message: e.message });
   }
+});
+
+/* ── List vouchers ── */
+router.get('/api/admin/vouchers', adminAuth, (req: Request, res: Response) => {
+  const limit = Math.min(Number(req.query.limit) || 200, 1000);
+  const vouchers = queryAll('SELECT * FROM vouchers ORDER BY id DESC LIMIT ?', [limit]);
+  res.json({ success: true, vouchers });
+});
+
+/* ── Connected users (real-time) ── */
+router.get('/api/admin/connected-users', adminAuth, (_req: Request, res: Response) => {
+  const users = getConnectedUsers();
+  const count = getConnectedUsersCount();
+  res.json({ success: true, users, totalUnique: count });
+});
+
+/* ── Clear all data (reset for new client) ── */
+router.post('/api/admin/clear-data', adminAuth, (req: Request, res: Response) => {
+  const { confirm } = req.body || {};
+  if (confirm !== 'RESET_ALL_DATA') {
+    return res.status(400).json({
+      success: false,
+      message: 'Tafadhali tuma confirm="RESET_ALL_DATA" kuthibitisha.',
+    });
+  }
+
+  clearAllData();
+  logger.info('Admin', 'All data cleared by admin');
+  res.json({ success: true, message: 'Data zote zimefutwa kikamilifu!' });
+});
+
+/* ── System health (admin version) ── */
+router.get('/api/admin/system-info', adminAuth, (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    version: '2.0.0',
+    nodeVersion: process.version,
+    uptime: Math.floor(process.uptime()),
+    memory: process.memoryUsage(),
+    platform: process.platform,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 /* ── Admin: Create voucher manually (without payment) ── */

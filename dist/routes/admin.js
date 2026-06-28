@@ -47,6 +47,47 @@ router.post('/api/admin/complete-order', auth_1.adminAuth, validation_1.validate
         res.status(500).json({ success: false, message: e.message });
     }
 });
+/* ── List vouchers ── */
+router.get('/api/admin/vouchers', auth_1.adminAuth, (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const vouchers = (0, db_1.queryAll)('SELECT * FROM vouchers ORDER BY id DESC LIMIT ?', [limit]);
+    res.json({ success: true, vouchers });
+});
+
+/* ── Connected users (real-time) ── */
+router.get('/api/admin/connected-users', auth_1.adminAuth, (_req, res) => {
+    const users = (0, db_1.getConnectedUsers)();
+    const count = (0, db_1.getConnectedUsersCount)();
+    res.json({ success: true, users, totalUnique: count });
+});
+
+/* ── Clear all data (reset for new client) ── */
+router.post('/api/admin/clear-data', auth_1.adminAuth, (req, res) => {
+    const { confirm } = req.body || {};
+    if (confirm !== 'RESET_ALL_DATA') {
+        return res.status(400).json({
+            success: false,
+            message: 'Tafadhali tuma confirm="RESET_ALL_DATA" kuthibitisha.',
+        });
+    }
+    (0, db_1.clearAllData)();
+    utils_1.logger.info('Admin', 'All data cleared by admin');
+    res.json({ success: true, message: 'Data zote zimefutwa kikamilifu!' });
+});
+
+/* ── System health (admin version) ── */
+router.get('/api/admin/system-info', auth_1.adminAuth, (_req, res) => {
+    res.json({
+        success: true,
+        version: '2.0.0',
+        nodeVersion: process.version,
+        uptime: Math.floor(process.uptime()),
+        memory: process.memoryUsage(),
+        platform: process.platform,
+        timestamp: new Date().toISOString(),
+    });
+});
+
 /* ── Admin: Create voucher manually (without payment) ── */
 router.post('/api/admin/create-voucher', auth_1.adminAuth, async (req, res) => {
     const { phone, package_name } = req.body || {};

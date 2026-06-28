@@ -33,6 +33,9 @@ exports.deleteMacAssociation = deleteMacAssociation;
 exports.saveMacAssociation = saveMacAssociation;
 exports.findMacAssociation = findMacAssociation;
 exports.markVoucherExpired = markVoucherExpired;
+exports.getConnectedUsers = getConnectedUsers;
+exports.getConnectedUsersCount = getConnectedUsersCount;
+exports.clearAllData = clearAllData;
 /**
  * SQLite database layer for SHIMBA WiFi.
  * Uses sql.js — a pure-JavaScript SQLite implementation that requires NO native compilation.
@@ -398,6 +401,38 @@ function deleteMacAssociation(mac) {
         run('DELETE FROM active_users WHERE mac = ? AND last_event = ?', [normalizedMac, 'associated']);
         utils_1.logger.info('DB', `Deleted expired MAC association for ${normalizedMac}`);
     }
+}
+
+/* ── Connected Users (real-time active sessions) ── */
+
+/** Get users currently connected (last_event='login' within last 10 minutes) */
+function getConnectedUsers() {
+    const freshAfter = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const rows = queryAll("SELECT * FROM active_users WHERE last_event = 'login' AND login_at >= ? ORDER BY login_at DESC", [freshAfter]);
+    return rows.map((r) => ({
+        id: r.id, user: r.user, code: r.code,
+        mac: r.mac || '', ip: r.ip || '',
+        package_name: r.package_name || '',
+        login_at: r.login_at || '',
+        last_event: r.last_event, updated_at: r.updated_at,
+    }));
+}
+
+/** Get total count of unique connected users in last hour */
+function getConnectedUsersCount() {
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const row = queryOne("SELECT COUNT(DISTINCT mac) as c FROM active_users WHERE last_event = 'login' AND login_at >= ?", [hourAgo]);
+    return row?.c || 0;
+}
+
+/* ── Clear all data (for reset) ── */
+
+function clearAllData() {
+    const tables = ['payment_orders', 'vouchers', 'sms_logs', 'active_users', 'webhook_events'];
+    for (const table of tables) {
+        run(`DELETE FROM ${table}`);
+    }
+    utils_1.logger.info('DB', 'All data cleared (all tables)');
 }
 
 /* ── Cleanup ── */
