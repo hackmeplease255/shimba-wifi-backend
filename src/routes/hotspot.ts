@@ -194,8 +194,8 @@ router.get('/api/connect', (req: Request, res: Response) => {
   <div id="status-retrying" class="hidden">
     <div class="spinner" style="display:inline-block;width:24px;height:24px;border:3px solid #1f2a44;border-top-color:#22d3ee;border-radius:50%;animation:spin 0.8s linear infinite;margin:1rem auto;"></div>
     <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
-    <p style="color:#fbbf24;font-weight:600;">Inajaribu tena kuunganisha...</p>
-    <p class="info">Vocha yako inaandaliwa kwenye router. Subiri sekunde chache...</p>
+    <p style="color:#fbbf24;font-weight:600;">Inasynchroniza vocha kwenye router...</p>
+    <p class="info">Vocha yako inawekwa kwenye router. Hii inachukua sekunde chache tu.</p>
   </div>
 
   <form id="loginForm" method="post" action="http://192.168.88.1/login" target="_self">
