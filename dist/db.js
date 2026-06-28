@@ -36,6 +36,9 @@ exports.markVoucherExpired = markVoucherExpired;
 exports.getConnectedUsers = getConnectedUsers;
 exports.getConnectedUsersCount = getConnectedUsersCount;
 exports.clearAllData = clearAllData;
+exports.getDailyRevenue = getDailyRevenue;
+exports.getAllCustomers = getAllCustomers;
+exports.getSystemEvents = getSystemEvents;
 /**
  * SQLite database layer for SHIMBA WiFi.
  * Uses sql.js — a pure-JavaScript SQLite implementation that requires NO native compilation.
@@ -436,6 +439,39 @@ function clearAllData() {
 }
 
 /* ── Cleanup ── */
+
+/** Get daily revenue for the last N days (for charts) */
+function getDailyRevenue(days) {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const rows = queryAll(`SELECT DATE(paid_at) as day, COALESCE(SUM(amount),0) as amount, COUNT(*) as count FROM payment_orders WHERE voucher_code IS NOT NULL AND paid_at >= ? GROUP BY DATE(paid_at) ORDER BY day ASC`, [cutoff]);
+    return rows.map((r) => ({
+        date: r.day, amount: Number(r.amount), count: Number(r.count),
+    }));
+}
+
+/** Get all customers (distinct phone numbers) */
+function getAllCustomers() {
+    return queryAll(`SELECT phone, COUNT(*) as totalOrders, COALESCE(SUM(amount),0) as totalSpent, MAX(created_at) as lastOrder FROM payment_orders GROUP BY phone ORDER BY lastOrder DESC LIMIT 200`).map((r) => ({
+        phone: r.phone, totalOrders: Number(r.totalOrders),
+        totalSpent: Number(r.totalSpent), lastOrder: r.lastOrder,
+    }));
+}
+
+/** Get recent system events (webhook_events + voucher creations) */
+function getSystemEvents(limit) {
+    const webhooks = queryAll('SELECT id, order_reference, status, created_at FROM webhook_events ORDER BY id DESC LIMIT ?', [limit]);
+    const vouchers = queryAll("SELECT code, 'voucher_created' as event, status, created_at FROM vouchers ORDER BY id DESC LIMIT ?", [limit]);
+    const events = [];
+    for (const w of webhooks) {
+        events.push({ id: w.id, type: 'webhook', message: `Webhook: ${w.status} — ${w.order_reference || ''}`, time: w.created_at });
+    }
+    for (const v of vouchers) {
+        events.push({ id: events.length + 1, type: 'voucher', message: `Vocha ${v.code} — ${v.status}`, time: v.created_at });
+    }
+    events.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+    return events.slice(0, limit);
+}
+
 function cleanupOldData(retentionDays) {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
     // sql.js run() doesn't return changes count, so we query before/after

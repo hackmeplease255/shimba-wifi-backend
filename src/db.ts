@@ -575,6 +575,48 @@ export function clearAllData(): void {
 
 /* ── Cleanup ── */
 
+/** Get daily revenue for the last N days (for charts) */
+export function getDailyRevenue(days = 14): { date: string; amount: number; count: number }[] {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const rows = queryAll(
+    `SELECT DATE(paid_at) as day, COALESCE(SUM(amount),0) as amount, COUNT(*) as count
+     FROM payment_orders WHERE voucher_code IS NOT NULL AND paid_at >= ?
+     GROUP BY DATE(paid_at) ORDER BY day ASC`,
+    [cutoff]
+  );
+  return rows.map((r: any) => ({
+    date: r.day, amount: Number(r.amount), count: Number(r.count),
+  }));
+}
+
+/** Get all customers (distinct phone numbers) */
+export function getAllCustomers(): { phone: string; totalOrders: number; totalSpent: number; lastOrder: string }[] {
+  return queryAll(
+    `SELECT phone, COUNT(*) as totalOrders, COALESCE(SUM(amount),0) as totalSpent, MAX(created_at) as lastOrder
+     FROM payment_orders GROUP BY phone ORDER BY lastOrder DESC LIMIT 200`
+  ).map((r: any) => ({
+    phone: r.phone, totalOrders: Number(r.totalOrders),
+    totalSpent: Number(r.totalSpent), lastOrder: r.lastOrder,
+  }));
+}
+
+/** Get recent system events (webhook_events + voucher creations) */
+export function getSystemEvents(limit = 50): { id: number; type: string; message: string; time: string }[] {
+  const webhooks = queryAll('SELECT id, order_reference, status, created_at FROM webhook_events ORDER BY id DESC LIMIT ?', [limit]);
+  const vouchers = queryAll("SELECT code, 'voucher_created' as event, status, created_at FROM vouchers ORDER BY id DESC LIMIT ?", [limit]);
+  const events: any[] = [];
+  for (const w of webhooks) {
+    events.push({ id: w.id, type: 'webhook', message: `Webhook: ${w.status} — ${w.order_reference || ''}`, time: w.created_at });
+  }
+  for (const v of vouchers) {
+    events.push({ id: events.length + 1, type: 'voucher', message: `Vocha ${v.code} — ${v.status}`, time: v.created_at });
+  }
+  events.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
+  return events.slice(0, limit);
+}
+
+/* ── Cleanup ── */
+
 export function cleanupOldData(retentionDays: number): void {
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
   // sql.js run() doesn't return changes count, so we query before/after

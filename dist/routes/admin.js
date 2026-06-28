@@ -75,6 +75,26 @@ router.post('/api/admin/clear-data', auth_1.adminAuth, (req, res) => {
     res.json({ success: true, message: 'Data zote zimefutwa kikamilifu!' });
 });
 
+/* ── Daily revenue (for charts) ── */
+router.get('/api/admin/daily-revenue', auth_1.adminAuth, (req, res) => {
+    const days = Math.min(Number(req.query.days) || 14, 90);
+    const revenue = (0, db_1.getDailyRevenue)(days);
+    res.json({ success: true, revenue });
+});
+
+/* ── Customers list ── */
+router.get('/api/admin/customers', auth_1.adminAuth, (_req, res) => {
+    const customers = (0, db_1.getAllCustomers)();
+    res.json({ success: true, customers });
+});
+
+/* ── System events / logs ── */
+router.get('/api/admin/system-events', auth_1.adminAuth, (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const events = (0, db_1.getSystemEvents)(limit);
+    res.json({ success: true, events });
+});
+
 /* ── System health (admin version) ── */
 router.get('/api/admin/system-info', auth_1.adminAuth, (_req, res) => {
     res.json({

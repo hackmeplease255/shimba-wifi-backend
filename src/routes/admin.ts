@@ -5,6 +5,7 @@ import {
   getAllOrders, getStats, queryAll,
   createOrder, createVoucher, findVoucherByCode, updateOrderVoucher, markVoucherSynced,
   getConnectedUsers, getConnectedUsersCount, clearAllData,
+  getDailyRevenue, getAllCustomers, getSystemEvents,
 } from '../db';
 import { validateOrderRef } from '../middleware/validation';
 import { issueVoucherForOrder } from './payments';
@@ -83,6 +84,26 @@ router.post('/api/admin/clear-data', adminAuth, (req: Request, res: Response) =>
   clearAllData();
   logger.info('Admin', 'All data cleared by admin');
   res.json({ success: true, message: 'Data zote zimefutwa kikamilifu!' });
+});
+
+/* ── Daily revenue (for charts) ── */
+router.get('/api/admin/daily-revenue', adminAuth, (req: Request, res: Response) => {
+  const days = Math.min(Number(req.query.days) || 14, 90);
+  const revenue = getDailyRevenue(days);
+  res.json({ success: true, revenue });
+});
+
+/* ── Customers list ── */
+router.get('/api/admin/customers', adminAuth, (_req: Request, res: Response) => {
+  const customers = getAllCustomers();
+  res.json({ success: true, customers });
+});
+
+/* ── System events / logs ── */
+router.get('/api/admin/system-events', adminAuth, (req: Request, res: Response) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const events = getSystemEvents(limit);
+  res.json({ success: true, events });
 });
 
 /* ── System health (admin version) ── */
