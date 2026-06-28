@@ -7,6 +7,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { config } from '../config';
+import { getAdminPassword } from '../db';
 import { logger } from '../utils';
 
 export interface AdminPayload {
@@ -49,7 +50,11 @@ export function adminAuth(req: Request, res: Response, next: NextFunction): void
       const username = decoded.slice(0, colonIdx);
       const password = decoded.slice(colonIdx + 1);
 
-      if (username === config.admin.username && password === config.admin.password) {
+      const dbPassword = getAdminPassword();
+      const valid =
+        username === config.admin.username &&
+        (password === config.admin.password || (dbPassword && password === dbPassword));
+      if (valid) {
         (req as any).admin = { username, role: 'admin' as const };
         return next();
       }
@@ -77,7 +82,11 @@ export function loginHandler(req: Request, res: Response): void {
     const username = decoded.slice(0, colonIdx);
     const password = decoded.slice(colonIdx + 1);
 
-    if (username === config.admin.username && password === config.admin.password) {
+    const dbPassword = getAdminPassword();
+    const valid =
+      username === config.admin.username &&
+      (password === config.admin.password || (dbPassword && password === dbPassword));
+    if (valid) {
       const token = generateAdminToken(username);
       res.json({ success: true, token, expiresIn: config.jwt.expiresIn });
     } else {

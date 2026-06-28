@@ -269,6 +269,13 @@ function initTables(): void {
     );
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
   // Create indexes (IF NOT EXISTS only works in newer SQLite — use try/catch)
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_orders_reference ON payment_orders(order_reference)',
@@ -573,7 +580,36 @@ export function clearAllData(): void {
   logger.info('DB', 'All data cleared (all tables)');
 }
 
-/* ── Cleanup ── */
+/* ── Settings (key-value store for dynamic config) ── */
+
+/** Get a setting value by key */
+export function getSetting(key: string): string | undefined {
+  const row = queryOne('SELECT value FROM settings WHERE key = ?', [key]);
+  return row?.value;
+}
+
+/** Set a setting value (insert or update) */
+export function setSetting(key: string, value: string): void {
+  run(
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    [key, value]
+  );
+}
+
+/* ── Admin Password ── */
+
+/** Get the admin password from DB (if set), otherwise undefined */
+export function getAdminPassword(): string | undefined {
+  return getSetting('admin_password');
+}
+
+/** Change the admin password (saved to DB) */
+export function changeAdminPassword(newPassword: string): void {
+  setSetting('admin_password', newPassword);
+  logger.info('DB', 'Admin password changed');
+}
+
+/* ── Revenue ── */
 
 /** Get daily revenue for the last N days (for charts) */
 export function getDailyRevenue(days = 14): { date: string; amount: number; count: number }[] {
@@ -613,6 +649,22 @@ export function getSystemEvents(limit = 50): { id: number; type: string; message
   }
   events.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
   return events.slice(0, limit);
+}
+
+/** Get monthly revenue for the last N months (for charts) */
+export function getMonthlyRevenue(months = 12): { month: string; amount: number; count: number }[] {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - months);
+  const isoCutoff = cutoff.toISOString();
+  const rows = queryAll(
+    `SELECT strftime('%Y-%m', paid_at) as month, COALESCE(SUM(amount),0) as amount, COUNT(*) as count
+     FROM payment_orders WHERE voucher_code IS NOT NULL AND paid_at >= ?
+     GROUP BY strftime('%Y-%m', paid_at) ORDER BY month ASC`,
+    [isoCutoff]
+  );
+  return rows.map((r: any) => ({
+    month: r.month, amount: Number(r.amount), count: Number(r.count),
+  }));
 }
 
 /* ── Cleanup ── */

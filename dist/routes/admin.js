@@ -82,6 +82,13 @@ router.get('/api/admin/daily-revenue', auth_1.adminAuth, (req, res) => {
     res.json({ success: true, revenue });
 });
 
+/* ── Monthly revenue (for charts) ── */
+router.get('/api/admin/monthly-revenue', auth_1.adminAuth, (req, res) => {
+    const months = Math.min(Number(req.query.months) || 12, 36);
+    const revenue = (0, db_1.getMonthlyRevenue)(months);
+    res.json({ success: true, revenue });
+});
+
 /* ── Customers list ── */
 router.get('/api/admin/customers', auth_1.adminAuth, (_req, res) => {
     const customers = (0, db_1.getAllCustomers)();
@@ -106,6 +113,27 @@ router.get('/api/admin/system-info', auth_1.adminAuth, (_req, res) => {
         platform: process.platform,
         timestamp: new Date().toISOString(),
     });
+});
+
+/* ── Change admin password ── */
+router.post('/api/admin/change-password', auth_1.adminAuth, (req, res) => {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+        return res.status(400).json({ success: false, message: 'Tafadhali toa currentPassword na newPassword' });
+    }
+    if (newPassword.length < 4) {
+        return res.status(400).json({ success: false, message: 'Password mpya inahitaji angalau herufi 4' });
+    }
+    // Verify current password against config (env) or DB
+    const dbPassword = (0, db_1.getAdminPassword)();
+    const currentValid = currentPassword === config_1.config.admin.password ||
+        (dbPassword && currentPassword === dbPassword);
+    if (!currentValid) {
+        return res.status(401).json({ success: false, message: 'Password ya sasa si sahihi' });
+    }
+    (0, db_1.changeAdminPassword)(newPassword);
+    utils_1.logger.info('Admin', 'Password changed by admin');
+    res.json({ success: true, message: 'Password imebadilishwa kikamilifu!' });
 });
 
 /* ── Admin: Create voucher manually (without payment) ── */

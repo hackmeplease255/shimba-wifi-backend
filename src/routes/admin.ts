@@ -5,7 +5,8 @@ import {
   getAllOrders, getStats, queryAll,
   createOrder, createVoucher, findVoucherByCode, updateOrderVoucher, markVoucherSynced,
   getConnectedUsers, getConnectedUsersCount, clearAllData,
-  getDailyRevenue, getAllCustomers, getSystemEvents,
+  getDailyRevenue, getMonthlyRevenue, getAllCustomers, getSystemEvents,
+  changeAdminPassword,
 } from '../db';
 import { validateOrderRef } from '../middleware/validation';
 import { issueVoucherForOrder } from './payments';
@@ -93,6 +94,13 @@ router.get('/api/admin/daily-revenue', adminAuth, (req: Request, res: Response) 
   res.json({ success: true, revenue });
 });
 
+/* ── Monthly revenue (for charts) ── */
+router.get('/api/admin/monthly-revenue', adminAuth, (req: Request, res: Response) => {
+  const months = Math.min(Number(req.query.months) || 12, 36);
+  const revenue = getMonthlyRevenue(months);
+  res.json({ success: true, revenue });
+});
+
 /* ── Customers list ── */
 router.get('/api/admin/customers', adminAuth, (_req: Request, res: Response) => {
   const customers = getAllCustomers();
@@ -117,6 +125,33 @@ router.get('/api/admin/system-info', adminAuth, (_req: Request, res: Response) =
     platform: process.platform,
     timestamp: new Date().toISOString(),
   });
+});
+
+/* ── Change admin password ── */
+router.post('/api/admin/change-password', adminAuth, (req: Request, res: Response) => {
+  const { currentPassword, newPassword } = req.body || {};
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ success: false, message: 'Tafadhali toa currentPassword na newPassword' });
+  }
+
+  if (newPassword.length < 4) {
+    return res.status(400).json({ success: false, message: 'Password mpya inahitaji angalau herufi 4' });
+  }
+
+  // Verify current password against config (env) or DB
+  const dbPassword = getAdminPassword();
+  const currentValid =
+    currentPassword === config.admin.password ||
+    (dbPassword && currentPassword === dbPassword);
+
+  if (!currentValid) {
+    return res.status(401).json({ success: false, message: 'Password ya sasa si sahihi' });
+  }
+
+  changeAdminPassword(newPassword);
+  logger.info('Admin', 'Password changed by admin');
+  res.json({ success: true, message: 'Password imebadilishwa kikamilifu!' });
 });
 
 /* ── Admin: Create voucher manually (without payment) ── */

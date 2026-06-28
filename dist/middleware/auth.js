@@ -8,6 +8,7 @@ exports.adminAuth = adminAuth;
 exports.loginHandler = loginHandler;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const config_1 = require("../config");
+const db_1 = require("../db");
 /** Generate a JWT token for admin */
 function generateAdminToken(username) {
     const payload = { username, role: 'admin' };
@@ -40,7 +41,10 @@ function adminAuth(req, res, next) {
             const colonIdx = decoded.indexOf(':');
             const username = decoded.slice(0, colonIdx);
             const password = decoded.slice(colonIdx + 1);
-            if (username === config_1.config.admin.username && password === config_1.config.admin.password) {
+            const dbPassword = (0, db_1.getAdminPassword)();
+            const valid = username === config_1.config.admin.username &&
+                (password === config_1.config.admin.password || (dbPassword && password === dbPassword));
+            if (valid) {
                 req.admin = { username, role: 'admin' };
                 return next();
             }
@@ -65,7 +69,10 @@ function loginHandler(req, res) {
         const colonIdx = decoded.indexOf(':');
         const username = decoded.slice(0, colonIdx);
         const password = decoded.slice(colonIdx + 1);
-        if (username === config_1.config.admin.username && password === config_1.config.admin.password) {
+        const dbPassword = (0, db_1.getAdminPassword)();
+        const valid = username === config_1.config.admin.username &&
+            (password === config_1.config.admin.password || (dbPassword && password === dbPassword));
+        if (valid) {
             const token = generateAdminToken(username);
             res.json({ success: true, token, expiresIn: config_1.config.jwt.expiresIn });
         }
