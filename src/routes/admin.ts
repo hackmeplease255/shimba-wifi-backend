@@ -1,0 +1,120 @@
+import { Router, Request, Response } from 'express';
+import { adminAuth, loginHandler } from '../middleware/auth';
+import { adminLimiter } from '../middleware/rateLimiter';
+import { getAllOrders, getStats, queryAll, createOrder, createVoucher, findVoucherByCode, updateOrderVoucher, markVoucherSynced } from '../db';
+import { validateOrderRef } from '../middleware/validation';
+import { issueVoucherForOrder } from './payments';
+import { getPackage, isValidPackage } from '../config';
+import { nowString, makeOrderReference, generateVoucherCode, normalizePhone, isValidPhone, logger } from '../utils';
+import { pushVoucher } from '../mikrotik';
+
+const router = Router();
+
+/* ── Admin login (get JWT token) ── */
+router.post('/api/admin/login', adminLimiter, loginHandler);
+
+/* ── Dashboard stats ── */
+router.get('/api/admin/stats', adminAuth, (_req: Request, res: Response) => {
+  const stats = getStats();
+  res.json({ success: true, ...stats });
+});
+
+/* ── List recent orders ── */
+router.get('/api/admin/orders', adminAuth, (req: Request, res: Response) => {
+  const limit = Math.min(Number(req.query.limit) || 300, 1000);
+  const orders = getAllOrders(limit);
+  res.json({ success: true, orders });
+});
+
+/* ── Manually complete a stuck payment ── */
+/* ── View recent webhook events (to debug Mongike format) ── */
+router.get('/api/admin/webhook-events', adminAuth, (req: Request, res: Response) => {
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const events = queryAll('SELECT * FROM webhook_events ORDER BY id DESC LIMIT ?', [limit]);
+  res.json({ success: true, events });
+});
+
+router.post('/api/admin/complete-order', adminAuth, validateOrderRef, async (req: Request, res: Response) => {
+  const { order_reference } = req.body || {};
+  if (!order_reference) {
+    return res.status(400).json({ success: false, message: 'Tafadhali toa order_reference' });
+  }
+
+  try {
+    const result = await issueVoucherForOrder(order_reference);
+    res.json({
+      success: true,
+      message: 'Vocha imetengenezwa!',
+      voucher_code: result.voucher_code,
+    });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+/* ── Admin: Create voucher manually (without payment) ── */
+router.post('/api/admin/create-voucher', adminAuth, async (req: Request, res: Response) => {
+  const { phone, package_name } = req.body || {};
+
+  if (!package_name || !isValidPackage(package_name)) {
+    return res.status(400).json({ success: false, message: 'Tafadhali toa package sahihi (6hours, 24hours, 48hours, 7days)' });
+  }
+
+  // Phone is optional — admin may give voucher directly without recording phone
+  const normalizedPhone = phone ? normalizePhone(phone) : 'ADMIN_CASH';
+  if (phone && !isValidPhone(normalizedPhone)) {
+    return res.status(400).json({ success: false, message: 'Namba ya simu si sahihi. Tumia format: 07xxxxxxxx au 06xxxxxxxx' });
+  }
+
+  try {
+    const pkg = getPackage(package_name)!;
+    const orderReference = makeOrderReference();
+
+    // Create payment order (marked as SUCCESS, admin-created)
+    createOrder(orderReference, normalizedPhone, package_name, pkg.amount);
+
+    // Create voucher directly
+    let code = generateVoucherCode();
+    let tries = 0;
+    while (findVoucherByCode(code) && tries < 50) {
+      code = generateVoucherCode();
+      tries++;
+    }
+
+    const paidAt = nowString();
+    updateOrderVoucher(orderReference, code, paidAt);
+    createVoucher(code, normalizedPhone, package_name, pkg.amount,
+      pkg.mikrotik_profile, pkg.limit_uptime, orderReference);
+
+    // Try to push to MikroTik
+    try {
+      const synced = await pushVoucher({
+        code, package_name,
+        mikrotik_profile: pkg.mikrotik_profile, limit_uptime: pkg.limit_uptime, order_reference: orderReference,
+      });
+      if (synced) {
+        markVoucherSynced(code);
+        logger.info('Admin', `Voucher ${code} created and synced to MikroTik by admin`);
+      } else {
+        logger.info('Admin', `Voucher ${code} created by admin (will sync via .rsc)`);
+      }
+    } catch (err) {
+      logger.warn('Admin', `Voucher ${code} created by admin but push failed (will sync via .rsc)`);
+    }
+
+    res.json({
+      success: true,
+      message: 'Vocha imetengenezwa kikamilifu!',
+      voucher_code: code,
+      order_reference: orderReference,
+      phone: normalizedPhone,
+      package: package_name,
+      amount: pkg.amount,
+    });
+  } catch (e: any) {
+    logger.error('Admin', 'Failed to create voucher', { error: e.message });
+    res.status(500).json({ success: false, message: 'Imeshindikana kutengeneza vocha: ' + e.message });
+  }
+});
+
+export default router;
