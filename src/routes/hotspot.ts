@@ -271,7 +271,11 @@ router.get('/api/auto-connect', (req: Request, res: Response) => {
         return res.json({ auto: false, expired: true, message: 'Vocha yako muda wake umekwisha. Tafadhali nunua mpya.' });
       }
 
-      logger.info('Hotspot', 'Auto-connect found voucher for MAC', { mac, code: association.code });
+      // Record the login in active_users so the admin panel sees it
+      const clientIp = req.ip || req.socket.remoteAddress || '';
+      upsertActiveUser(voucher.code, voucher.code, mac, clientIp, voucher.package_name);
+
+      logger.info('Hotspot', 'Auto-connect found voucher for MAC', { mac, code: association.code, ip: clientIp });
       return res.json({
         auto: true,
         code: association.code,
