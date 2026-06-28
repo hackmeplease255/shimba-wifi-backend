@@ -3,6 +3,7 @@ import { config } from '../config';
 import {
   findVoucherByCode, upsertActiveUser, findActiveUser,
   getRecentVouchers, markVoucherSynced,
+  saveMacAssociation, findMacAssociation,
 } from '../db';
 import { escapeRsc, nowIso, nowString, logger } from '../utils';
 
@@ -239,6 +240,47 @@ router.get('/api/connect', (req: Request, res: Response) => {
 </html>`;
 
   res.type('text/html').send(html);
+});
+
+/* ── Auto-connect: look up voucher by MAC ── */
+router.get('/api/auto-connect', (req: Request, res: Response) => {
+  const mac = String(req.query.mac || '').trim().toUpperCase();
+  if (!mac) {
+    return res.json({ auto: false });
+  }
+
+  const association = findMacAssociation(mac);
+  if (association) {
+    // Verify the voucher still exists in the DB
+    const voucher = findVoucherByCode(association.code);
+    if (voucher) {
+      logger.info('Hotspot', 'Auto-connect found voucher for MAC', { mac, code: association.code });
+      return res.json({
+        auto: true,
+        code: association.code,
+        package_name: association.package_name,
+      });
+    }
+  }
+
+  res.json({ auto: false });
+});
+
+/* ── Associate a MAC address with a voucher code ── */
+router.post('/api/associate-mac', (req: Request, res: Response) => {
+  const { mac, code } = req.body || {};
+  if (!mac || !code) {
+    return res.json({ success: false });
+  }
+
+  const voucher = findVoucherByCode(String(code).trim().toUpperCase());
+  if (!voucher) {
+    return res.json({ success: false });
+  }
+
+  saveMacAssociation(String(mac).trim().toUpperCase(), voucher.code, voucher.package_name);
+  logger.info('Hotspot', 'MAC associated with voucher', { mac: String(mac).trim().toUpperCase(), code: voucher.code });
+  res.json({ success: true });
 });
 
 /* ── Serve MikroTik hotspot files (placeholder) ── */

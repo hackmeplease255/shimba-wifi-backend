@@ -470,6 +470,42 @@ export function findStuckProcessingOrders(maxAgeMs: number): PaymentOrder[] {
   ).map(mapOrder);
 }
 
+/* ── MAC Associations (for auto-connect) ── */
+
+/** Save or update a MAC-to-voucher association */
+export function saveMacAssociation(mac: string, code: string, packageName: string): void {
+  const normalizedMac = mac.toUpperCase();
+  const existing = queryOne('SELECT * FROM active_users WHERE mac = ? AND last_event = ?', [normalizedMac, 'associated']);
+  const now = nowString();
+
+  if (existing) {
+    run(
+      `UPDATE active_users SET code = ?, package_name = ?, last_event = 'associated', updated_at = ? WHERE mac = ? AND last_event = 'associated'`,
+      [code.toUpperCase(), packageName, now, normalizedMac]
+    );
+  } else {
+    run(
+      `INSERT INTO active_users (user, code, mac, ip, package_name, login_at, last_event, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'associated', ?)`,
+      [code.toUpperCase(), code.toUpperCase(), normalizedMac, '', packageName, nowIso(), now]
+    );
+  }
+}
+
+/** Find a voucher code associated with a MAC address */
+export function findMacAssociation(mac: string): { code: string; package_name: string } | undefined {
+  const normalizedMac = mac.toUpperCase();
+  // First check for active associations (last_event = 'associated')
+  const row = queryOne(
+    "SELECT * FROM active_users WHERE mac = ? AND last_event = 'associated' ORDER BY updated_at DESC LIMIT 1",
+    [normalizedMac]
+  );
+  if (row && row.code) {
+    return { code: row.code, package_name: row.package_name || '' };
+  }
+  return undefined;
+}
+
 /* ── Cleanup ── */
 
 export function cleanupOldData(retentionDays: number): void {
