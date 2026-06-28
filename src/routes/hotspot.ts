@@ -3,7 +3,7 @@ import { config } from '../config';
 import {
   findVoucherByCode, upsertActiveUser, findActiveUser,
   getRecentVouchers, markVoucherSynced,
-  saveMacAssociation, findMacAssociation,
+  saveMacAssociation, findMacAssociation, isVoucherExpired, deleteMacAssociation,
 } from '../db';
 import { escapeRsc, nowIso, nowString, logger } from '../utils';
 
@@ -254,6 +254,14 @@ router.get('/api/auto-connect', (req: Request, res: Response) => {
     // Verify the voucher still exists in the DB
     const voucher = findVoucherByCode(association.code);
     if (voucher) {
+      // Check if voucher has expired (limit-uptime reached)
+      if (isVoucherExpired(voucher)) {
+        logger.info('Hotspot', 'Auto-connect skipped — voucher expired', { mac, code: association.code });
+        // Clean up the expired association so it doesn't trigger again
+        deleteMacAssociation(mac);
+        return res.json({ auto: false, expired: true, message: 'Vocha yako muda wake umekwisha. Tafadhali nunua mpya.' });
+      }
+
       logger.info('Hotspot', 'Auto-connect found voucher for MAC', { mac, code: association.code });
       return res.json({
         auto: true,

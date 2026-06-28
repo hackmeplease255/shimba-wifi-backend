@@ -10,7 +10,7 @@ import initSqlJs, { Database as SqlJsDatabase, SqlJsStatic } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 import { config } from './config';
-import { nowString, nowIso, normalizePhone, logger } from './utils';
+import { nowString, nowIso, normalizePhone, parseLimitUptime, logger } from './utils';
 
 /* ── Type Definitions ── */
 
@@ -505,6 +505,25 @@ export function findMacAssociation(mac: string): { code: string; package_name: s
     return { code: row.code, package_name: row.package_name || '' };
   }
   return undefined;
+}
+
+/** Check if a voucher has expired based on its created_at + limit_uptime */
+export function isVoucherExpired(voucher: { created_at: string; limit_uptime: string }): boolean {
+  const maxDurationMs = parseLimitUptime(voucher.limit_uptime);
+  if (maxDurationMs <= 0) return false; // Unknown format — don't assume expired
+  const createdAt = new Date(voucher.created_at).getTime();
+  const expiryTime = createdAt + maxDurationMs;
+  return Date.now() > expiryTime;
+}
+
+/** Delete a MAC association (e.g. when the voucher has expired) */
+export function deleteMacAssociation(mac: string): void {
+  const normalizedMac = mac.toUpperCase();
+  const existing = queryOne('SELECT * FROM active_users WHERE mac = ? AND last_event = ?', [normalizedMac, 'associated']);
+  if (existing) {
+    run('DELETE FROM active_users WHERE mac = ? AND last_event = ?', [normalizedMac, 'associated']);
+    logger.info('DB', `Deleted expired MAC association for ${normalizedMac}`);
+  }
 }
 
 /* ── Cleanup ── */

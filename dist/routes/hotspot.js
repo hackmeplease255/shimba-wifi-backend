@@ -219,6 +219,50 @@ router.get('/api/connect', (req, res) => {
 </html>`;
     res.type('text/html').send(html);
 });
+/* ── Auto-connect: look up voucher by MAC ── */
+router.get('/api/auto-connect', (req, res) => {
+    const mac = String(req.query.mac || '').trim().toUpperCase();
+    if (!mac) {
+        return res.json({ auto: false });
+    }
+    const association = (0, db_1.findMacAssociation)(mac);
+    if (association) {
+        // Verify the voucher still exists in the DB
+        const voucher = (0, db_1.findVoucherByCode)(association.code);
+        if (voucher) {
+            // Check if voucher has expired (limit-uptime reached)
+            if ((0, db_1.isVoucherExpired)(voucher)) {
+                utils_1.logger.info('Hotspot', 'Auto-connect skipped — voucher expired', { mac, code: association.code });
+                // Clean up the expired association so it doesn't trigger again
+                (0, db_1.deleteMacAssociation)(mac);
+                return res.json({ auto: false, expired: true, message: 'Vocha yako muda wake umekwisha. Tafadhali nunua mpya.' });
+            }
+            utils_1.logger.info('Hotspot', 'Auto-connect found voucher for MAC', { mac, code: association.code });
+            return res.json({
+                auto: true,
+                code: association.code,
+                package_name: association.package_name,
+            });
+        }
+    }
+    res.json({ auto: false });
+});
+
+/* ── Associate a MAC address with a voucher code ── */
+router.post('/api/associate-mac', (req, res) => {
+    const { mac, code } = req.body || {};
+    if (!mac || !code) {
+        return res.json({ success: false });
+    }
+    const voucher = (0, db_1.findVoucherByCode)(String(code).trim().toUpperCase());
+    if (!voucher) {
+        return res.json({ success: false });
+    }
+    (0, db_1.saveMacAssociation)(String(mac).trim().toUpperCase(), voucher.code, voucher.package_name);
+    utils_1.logger.info('Hotspot', 'MAC associated with voucher', { mac: String(mac).trim().toUpperCase(), code: voucher.code });
+    res.json({ success: true });
+});
+
 /* ── Serve MikroTik hotspot files (placeholder) ── */
 router.get('/mt-files/:file', (req, res) => {
     const file = String(req.params.file || '');

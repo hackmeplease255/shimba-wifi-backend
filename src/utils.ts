@@ -51,6 +51,19 @@ export function generateVoucherCode(): string {
   return out;
 }
 
+/** Parse MikroTik limit-uptime format into milliseconds */
+export function parseLimitUptime(limit: string): number {
+  const s = String(limit || '').trim().toLowerCase();
+  const match = s.match(/^(\d+)\s*(h|hr|hrs|hours?|d|day|days?|w|week|weeks?)$/);
+  if (!match) return 0; // Unknown format, don't assume expiry
+  const val = parseInt(match[1], 10);
+  const unit = match[2][0]; // 'h', 'd', or 'w'
+  if (unit === 'h') return val * 60 * 60 * 1000;
+  if (unit === 'd') return val * 24 * 60 * 60 * 1000;
+  if (unit === 'w') return val * 7 * 24 * 60 * 60 * 1000;
+  return 0;
+}
+
 /** Logger — structured, with levels. Falls back to console in non-production. */
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3 } as const;
 type LogLevel = keyof typeof LOG_LEVELS;

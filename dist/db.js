@@ -28,6 +28,10 @@ exports.logWebhookEvent = logWebhookEvent;
 exports.getStats = getStats;
 exports.findStuckProcessingOrders = findStuckProcessingOrders;
 exports.cleanupOldData = cleanupOldData;
+exports.isVoucherExpired = isVoucherExpired;
+exports.deleteMacAssociation = deleteMacAssociation;
+exports.saveMacAssociation = saveMacAssociation;
+exports.findMacAssociation = findMacAssociation;
 /**
  * SQLite database layer for SHIMBA WiFi.
  * Uses sql.js — a pure-JavaScript SQLite implementation that requires NO native compilation.
@@ -220,6 +224,7 @@ function initTables() {
         'CREATE INDEX IF NOT EXISTS idx_orders_phone ON payment_orders(phone)',
         'CREATE INDEX IF NOT EXISTS idx_vouchers_code ON vouchers(code)',
         'CREATE INDEX IF NOT EXISTS idx_vouchers_phone ON vouchers(phone)',
+        'CREATE INDEX IF NOT EXISTS idx_active_users_mac ON active_users(mac)',
     ];
     for (const idx of indexes) {
         try {
@@ -341,6 +346,53 @@ function findStuckProcessingOrders(maxAgeMs) {
     const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
     return queryAll("SELECT * FROM payment_orders WHERE status = 'PROCESSING' AND created_at < ? AND voucher_code IS NULL ORDER BY created_at ASC", [cutoff]).map(mapOrder);
 }
+/* ── MAC Associations (for auto-connect) ── */
+
+/** Save or update a MAC-to-voucher association */
+function saveMacAssociation(mac, code, packageName) {
+    const normalizedMac = mac.toUpperCase();
+    const existing = queryOne('SELECT * FROM active_users WHERE mac = ? AND last_event = ?', [normalizedMac, 'associated']);
+    const now = (0, utils_1.nowString)();
+    if (existing) {
+        run(`UPDATE active_users SET code = ?, package_name = ?, last_event = 'associated', updated_at = ? WHERE mac = ? AND last_event = 'associated'`, [code.toUpperCase(), packageName, now, normalizedMac]);
+    }
+    else {
+        run(`INSERT INTO active_users (user, code, mac, ip, package_name, login_at, last_event, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'associated', ?)`, [code.toUpperCase(), code.toUpperCase(), normalizedMac, '', packageName, (0, utils_1.nowIso)(), now]);
+    }
+}
+
+/** Find a voucher code associated with a MAC address */
+function findMacAssociation(mac) {
+    const normalizedMac = mac.toUpperCase();
+    // First check for active associations (last_event = 'associated')
+    const row = queryOne("SELECT * FROM active_users WHERE mac = ? AND last_event = 'associated' ORDER BY updated_at DESC LIMIT 1", [normalizedMac]);
+    if (row && row.code) {
+        return { code: row.code, package_name: row.package_name || '' };
+    }
+    return undefined;
+}
+
+/** Check if a voucher has expired based on its created_at + limit_uptime */
+function isVoucherExpired(voucher) {
+    const maxDurationMs = (0, utils_1.parseLimitUptime)(voucher.limit_uptime);
+    if (maxDurationMs <= 0)
+        return false; // Unknown format — don't assume expired
+    const createdAt = new Date(voucher.created_at).getTime();
+    const expiryTime = createdAt + maxDurationMs;
+    return Date.now() > expiryTime;
+}
+
+/** Delete a MAC association (e.g. when the voucher has expired) */
+function deleteMacAssociation(mac) {
+    const normalizedMac = mac.toUpperCase();
+    const existing = queryOne('SELECT * FROM active_users WHERE mac = ? AND last_event = ?', [normalizedMac, 'associated']);
+    if (existing) {
+        run('DELETE FROM active_users WHERE mac = ? AND last_event = ?', [normalizedMac, 'associated']);
+        utils_1.logger.info('DB', `Deleted expired MAC association for ${normalizedMac}`);
+    }
+}
+
 /* ── Cleanup ── */
 function cleanupOldData(retentionDays) {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
