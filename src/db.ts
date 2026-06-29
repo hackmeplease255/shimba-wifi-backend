@@ -571,14 +571,9 @@ export function getConnectedUsers(): ActiveUser[] {
   }));
 }
 
-/** Get total count of unique connected users (deduplicated by MAC) */
+/** Get total count of unique connected users (uses same dedup logic as getConnectedUsers) */
 export function getConnectedUsersCount(): number {
-  const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-  const rows = queryAll(
-    "SELECT DISTINCT mac FROM active_users WHERE last_event = 'login' AND login_at >= ? AND mac IS NOT NULL AND mac != ''",
-    [freshAfter]
-  );
-  return rows.length;
+  return getConnectedUsers().length;
 }
 
 /* ── Clear all data (for reset) ── */
