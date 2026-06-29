@@ -594,6 +594,38 @@ export function clearPendingDisconnects(): void {
   run("DELETE FROM settings WHERE key LIKE 'pending_disconnect_%'");
 }
 
+/**
+ * Auto-remove expired voucher sessions from active_users.
+ * Called periodically by the background interval.
+ * Returns count of removed sessions.
+ */
+export function cleanupExpiredActiveUsers(): number {
+  const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const activeRows = queryAll(
+    'SELECT DISTINCT user, code FROM active_users WHERE updated_at >= ? AND code IS NOT NULL AND code != ?',
+    [freshAfter, '']
+  );
+  let removed = 0;
+  for (const row of activeRows) {
+    const code = String(row.code || '').trim();
+    if (!code) continue;
+    const voucher = code ? findVoucherByCode(code) : null;
+    if (voucher && isVoucherExpired(voucher)) {
+      // Remove from active_users
+      run('DELETE FROM active_users WHERE user = ? OR code = ?', [code, code]);
+      // Mark voucher as used
+      markVoucherExpired(code);
+      removed++;
+      logger.info('DB', `Auto-removed expired session: ${code}`);
+    }
+  }
+  if (removed > 0) {
+    logger.info('DB', `Cleanup expired sessions: removed ${removed} users`);
+  }
+  return removed;
+}
+
+
 /* ── Stats ── */
 
 export function getStats(): {

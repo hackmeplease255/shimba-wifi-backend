@@ -7,7 +7,7 @@
  * 4. Schedules periodic data cleanup
  */
 import { config } from './config';
-import { initDb, cleanupOldData, closeDb, findStuckProcessingOrders } from './db';
+import { initDb, cleanupOldData, closeDb, findStuckProcessingOrders, cleanupExpiredActiveUsers } from './db';
 import { logger } from './utils';
 import app from './app';
 import { migrate } from './migrate';
@@ -95,6 +95,24 @@ async function main() {
 
   // Run cleanup once on startup
   cleanupOldData(config.dataRetentionDays);
+
+  /* 6. Auto-expire voucher sessions every 30 seconds */
+  // When a voucher's limit-uptime expires, the user should be
+  // automatically removed from active_users and the hotspot.
+  setInterval(() => {
+    try {
+      cleanupExpiredActiveUsers();
+    } catch (err) {
+      logger.error('Session', 'Expiry cleanup error', { error: err instanceof Error ? err.message : String(err) });
+    }
+  }, 30_000);
+
+  // Run once on startup to catch any sessions that expired during downtime
+  setTimeout(() => {
+    try {
+      cleanupExpiredActiveUsers();
+    } catch { /* ignore */ }
+  }, 10_000);
 }
 
 /* ── Startup ── */

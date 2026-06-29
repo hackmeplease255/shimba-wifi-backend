@@ -82,7 +82,9 @@ router.get(`/mikrotik-sync-${config.syncToken}.rsc`, (req: Request, res: Respons
     const code = escapeRsc(v.code);
 
     if (isVoucherExpired(v)) {
-      // Remove expired voucher from MikroTik and mark as used in DB
+      // Kill active session + remove expired voucher from MikroTik, mark as used in DB
+      script += `/ip hotspot active remove [find user="${code}"]
+`;
       script += `/ip hotspot user remove [find name="${code}"]
 `;
       markVoucherExpired(v.code);

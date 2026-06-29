@@ -72,11 +72,12 @@ router.get(`/mikrotik-sync-${config_1.config.syncToken}.rsc`, (req, res) => {
     for (const v of recentVouchers) {
         const code = (0, utils_1.escapeRsc)(v.code);
         if ((0, db_1.isVoucherExpired)(v)) {
-            // Remove expired voucher from MikroTik and mark as used in DB
+            // Kill active session + remove expired voucher from MikroTik, mark as used in DB
+            script += `/ip hotspot active remove [find user="${code}"]
+`;
             script += `/ip hotspot user remove [find name="${code}"]
 `;
             (0, db_1.markVoucherExpired)(v.code);
-            // Note: MAC association cleanup is handled by auto-connect endpoint
             utils_1.logger.info('MikroTik', 'Expired voucher removed from sync script', { code: v.code });
         }
         else {

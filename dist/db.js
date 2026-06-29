@@ -54,6 +54,7 @@ exports.cleanupOldUsage = cleanupOldUsage;
 exports.getPendingDisconnects = getPendingDisconnects;
 exports.removePendingDisconnect = removePendingDisconnect;
 exports.clearPendingDisconnects = clearPendingDisconnects;
+exports.cleanupExpiredActiveUsers = cleanupExpiredActiveUsers;
 /**
  * SQLite database layer for SHIMBA WiFi.
  * Uses sql.js — a pure-JavaScript SQLite implementation that requires NO native compilation.
@@ -459,6 +460,31 @@ function removePendingDisconnect(code) {
 
 function clearPendingDisconnects() {
     run("DELETE FROM settings WHERE key LIKE 'pending_disconnect_%'");
+}
+
+/**
+ * Auto-remove expired voucher sessions from active_users.
+ * Called periodically by the background interval.
+ */
+function cleanupExpiredActiveUsers() {
+    const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const activeRows = queryAll('SELECT DISTINCT user, code FROM active_users WHERE updated_at >= ? AND code IS NOT NULL AND code != ?', [freshAfter, '']);
+    let removed = 0;
+    for (const row of activeRows) {
+        const code = String(row.code || '').trim();
+        if (!code) continue;
+        const voucher = code ? findVoucherByCode(code) : null;
+        if (voucher && isVoucherExpired(voucher)) {
+            run('DELETE FROM active_users WHERE user = ? OR code = ?', [code, code]);
+            markVoucherExpired(code);
+            removed++;
+            utils_1.logger.info('DB', `Auto-removed expired session: ${code}`);
+        }
+    }
+    if (removed > 0) {
+        utils_1.logger.info('DB', `Cleanup expired sessions: removed ${removed} users`);
+    }
+    return removed;
 }
 
 /* ── Stats ── */
