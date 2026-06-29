@@ -33,6 +33,7 @@ exports.deleteMacAssociation = deleteMacAssociation;
 exports.saveMacAssociation = saveMacAssociation;
 exports.findMacAssociation = findMacAssociation;
 exports.markVoucherExpired = markVoucherExpired;
+exports.reportActiveSessions = reportActiveSessions;
 exports.getConnectedUsers = getConnectedUsers;
 exports.getConnectedUsersCount = getConnectedUsersCount;
 exports.clearAllData = clearAllData;
@@ -415,6 +416,24 @@ function deleteMacAssociation(mac) {
         run('DELETE FROM active_users WHERE mac = ? AND last_event = ?', [normalizedMac, 'associated']);
         utils_1.logger.info('DB', `Deleted expired MAC association for ${normalizedMac}`);
     }
+}
+
+/* ── Report active sessions from MikroTik (called by scheduler script) ── */
+
+/**
+ * Bulk-report active sessions from MikroTik hotspot active list.
+ * Called by the MikroTik scheduler via POST /api/report-active-bulk.
+ * Each session is upserted into active_users.
+ */
+function reportActiveSessions(sessions) {
+    let count = 0;
+    for (const s of sessions) {
+        if (s.user && s.user.trim()) {
+            upsertActiveUser(s.user.trim().toUpperCase(), s.user.trim().toUpperCase(), s.mac || '', s.ip || '', null);
+            count++;
+        }
+    }
+    return count;
 }
 
 /* ── Connected Users (real-time active sessions) ── */

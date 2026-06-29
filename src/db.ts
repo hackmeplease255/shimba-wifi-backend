@@ -542,6 +542,24 @@ export function deleteMacAssociation(mac: string): void {
   }
 }
 
+/* ── Report active sessions from MikroTik (called by scheduler script) ── */
+
+/**
+ * Bulk-report active sessions from MikroTik hotspot active list.
+ * Called by the MikroTik scheduler via POST /api/report-active-bulk.
+ * Each session is upserted into active_users.
+ */
+export function reportActiveSessions(sessions: { user: string; mac: string; ip: string }[]): number {
+  let count = 0;
+  for (const s of sessions) {
+    if (s.user && s.user.trim()) {
+      upsertActiveUser(s.user.trim().toUpperCase(), s.user.trim().toUpperCase(), s.mac || '', s.ip || '', null);
+      count++;
+    }
+  }
+  return count;
+}
+
 /* ── Connected Users (real-time active sessions) ── */
 
 /** Get users recently active (deduplicated by MAC, any event within last 5 minutes) */
