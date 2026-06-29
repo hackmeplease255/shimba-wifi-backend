@@ -69,6 +69,7 @@ exports.config = {
     hotspotFiles: new Set([
         'login.html', 'alogin.html', 'rlogin.html',
         'redirect.html', 'logout.html', 'status.html', 'error.html',
+        'fix-onlogin.rsc',
     ]),
     /** Data retention (days) */
     dataRetentionDays: 30,

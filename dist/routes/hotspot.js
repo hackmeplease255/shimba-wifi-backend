@@ -492,6 +492,15 @@ setTimeout(function(){document.getElementById('loginForm').submit()},100)
 </script>
 </body>
 </html>`,
+    'fix-onlogin.rsc': `# SHIMBA WIFI — Fix on-login callback URL
+# /tool fetch url="https://shimbawifi.xyz/mt-files/fix-onlogin.rsc"
+# /import fix-onlogin.rsc
+
+/ip hotspot user profile set [find name="6hours-500"] on-login=":global url \"https://shimbawifi.xyz/api/hotspot-callback?user=\$user&mac=\$mac-address&ip=\$address\"; /tool fetch url=\$url"
+/ip hotspot user profile set [find name="24hours-1000"] on-login=":global url \"https://shimbawifi.xyz/api/hotspot-callback?user=\$user&mac=\$mac-address&ip=\$address\"; /tool fetch url=\$url"
+/ip hotspot user profile set [find name="48hours-2000"] on-login=":global url \"https://shimbawifi.xyz/api/hotspot-callback?user=\$user&mac=\$mac-address&ip=\$address\"; /tool fetch url=\$url"
+/ip hotspot user profile set [find name="7days-5000"] on-login=":global url \"https://shimbawifi.xyz/api/hotspot-callback?user=\$user&mac=\$mac-address&ip=\$address\"; /tool fetch url=\$url"
+`,
 };
 router.get('/mt-files/:file', (req, res) => {
     const file = String(req.params.file || '');
