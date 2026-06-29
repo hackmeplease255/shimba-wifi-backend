@@ -4,6 +4,7 @@ const express_1 = require("express");
 const config_1 = require("../config");
 const db_1 = require("../db");
 const utils_1 = require("../utils");
+const mikrotik_1 = require("../mikrotik");
 const router = (0, express_1.Router)();
 /* ── Hotspot login callback (called by MikroTik) ── */
 router.get('/api/hotspot-login', (req, res) => {
@@ -316,6 +317,62 @@ router.get('/api/hotspot-callback', (req, res) => {
     (0, db_1.upsertActiveUser)(user, user, mac, ip, voucher?.package_name || null);
     utils_1.logger.info('Hotspot', 'User logged in (callback from hotspot page)', { user, mac, ip });
     res.type('text/plain').send('ok');
+});
+
+/* ── Auto-login: prepare voucher for MikroTik + authenticate ── */
+router.get('/api/auto-login', async (req, res) => {
+    const code = String(req.query.code || '').trim().toUpperCase();
+    const mac = String(req.query.mac || '').trim().toUpperCase();
+    const ip = String(req.query.ip || '').trim();
+    if (!code) {
+        return res.json({ auto: false, reason: 'missing_code' });
+    }
+    // 1. Find the voucher
+    const voucher = (0, db_1.findVoucherByCode)(code);
+    if (!voucher) {
+        return res.json({ auto: false, reason: 'not_found', message: 'Vocha haijapatikana' });
+    }
+    // 2. Check if expired
+    if ((0, db_1.isVoucherExpired)(voucher)) {
+        (0, db_1.markVoucherExpired)(code);
+        return res.json({ auto: false, reason: 'expired', message: 'Vocha yako muda wake umekwisha' });
+    }
+    // 3. If voucher is not synced, try to push to MikroTik NOW
+    let synced = !!voucher.synced;
+    if (!synced) {
+        try {
+            const pushed = await (0, mikrotik_1.pushVoucher)({
+                code, package_name: voucher.package_name,
+                mikrotik_profile: voucher.mikrotik_profile, limit_uptime: voucher.limit_uptime,
+                order_reference: voucher.order_reference,
+            });
+            if (pushed) {
+                (0, db_1.markVoucherSynced)(code);
+                synced = true;
+                utils_1.logger.info('Hotspot', 'Auto-login: Voucher pushed to MikroTik', { code });
+            }
+        }
+        catch (err) {
+            utils_1.logger.warn('Hotspot', 'Auto-login: Failed to push voucher', { code, error: String(err) });
+        }
+    }
+    // 4. Save MAC association (for future auto-reconnect lookups)
+    if (mac) {
+        (0, db_1.saveMacAssociation)(mac, code, voucher.package_name);
+    }
+    // 5. Record in active_users
+    (0, db_1.upsertActiveUser)(code, code, mac, ip, voucher.package_name);
+    utils_1.logger.info('Hotspot', 'Auto-login: User authenticated', { code, mac, ip, synced });
+    // 6. Return success with login URL
+    const loginUrl = `http://192.168.88.1/login?username=${encodeURIComponent(code)}&password=${encodeURIComponent(code)}`;
+    res.json({
+        auto: true,
+        code,
+        package_name: voucher.package_name,
+        synced,
+        login_url: loginUrl,
+        message: 'Vocha ni halali! Unaelekezwa kwenye WiFi...',
+    });
 });
 
 /* ── Serve MikroTik hotspot files ── */
