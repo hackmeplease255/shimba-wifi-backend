@@ -84,7 +84,7 @@ router.get('/api/admin/connected-users', auth_1.adminAuth, (_req, res) => {
             ip: u.ip,
             package_name: u.package_name,
             login_at: u.login_at,
-            phone: voucher?.phone || '',
+            phone: (voucher?.phone && voucher.phone !== 'ADMIN_CASH') ? voucher.phone : '',
             amount: voucher?.amount || 0,
             voucher_status: voucher?.status || '',
             remaining: remainingLabel,

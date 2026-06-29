@@ -637,7 +637,9 @@ router.post('/api/report-active-bulk', (req: Request, res: Response) => {
  */
 router.get('/api/hotspot-active-report.rsc', (req: Request, res: Response) => {
   const baseUrl = config.publicBaseUrl;
-  const schedulerEvent = `/tool fetch url="${baseUrl}/api/hotspot-actives.rsc"`;
+  // CRITICAL: on-event must BOTH fetch AND import the RSC!
+  // Fetch alone just downloads the file — it never executes.
+  const schedulerEvent = `/tool fetch url="${baseUrl}/api/hotspot-actives.rsc"; :delay 3s; /import hotspot-actives.rsc`;
   const escapedEvent = escapeRsc(schedulerEvent);
 
   let script = `# SHIMBA WIFI — Hotspot Active Session Reporter
@@ -652,8 +654,10 @@ router.get('/api/hotspot-active-report.rsc', (req: Request, res: Response) => {
   /system scheduler add name="shimba-active" interval=30s on-event="${escapedEvent}" start-time=startup
 }
 
-# Do initial sync right now
+# Do initial sync right now (fetch + import = execute)
 /tool fetch url="${baseUrl}/api/hotspot-actives.rsc"
+:delay 3s
+/import hotspot-actives.rsc
 `;
 
   res.type('text/plain').send(script);

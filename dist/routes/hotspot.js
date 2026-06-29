@@ -521,7 +521,7 @@ router.post('/api/report-active-bulk', (req, res) => {
 /* ── Hotspot active reporter setup (RSC script for MikroTik) ── */
 router.get('/api/hotspot-active-report.rsc', (req, res) => {
     const baseUrl = config_1.config.publicBaseUrl;
-    const schedulerEvent = `/tool fetch url="${baseUrl}/api/hotspot-actives.rsc"`;
+    const schedulerEvent = `/tool fetch url="${baseUrl}/api/hotspot-actives.rsc"; :delay 3s; /import hotspot-actives.rsc`;
     const escapedEvent = (0, utils_1.escapeRsc)(schedulerEvent);
     let script = `# SHIMBA WIFI — Hotspot Active Session Reporter
 # Download and import ONCE on MikroTik:
@@ -535,8 +535,10 @@ router.get('/api/hotspot-active-report.rsc', (req, res) => {
   /system scheduler add name="shimba-active" interval=30s on-event="${escapedEvent}" start-time=startup
 }
 
-# Do initial sync right now
+# Do initial sync right now (fetch + import = execute)
 /tool fetch url="${baseUrl}/api/hotspot-actives.rsc"
+:delay 3s
+/import hotspot-actives.rsc
 `;
     res.type('text/plain').send(script);
 });
