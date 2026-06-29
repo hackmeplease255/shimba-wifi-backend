@@ -544,14 +544,25 @@ export function deleteMacAssociation(mac: string): void {
 
 /* ── Connected Users (real-time active sessions) ── */
 
-/** Get users currently connected (last_event='login' within last 5 minutes) */
+/** Get users currently connected (deduplicated by MAC, last_event='login' within last 5 minutes) */
 export function getConnectedUsers(): ActiveUser[] {
   const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const rows = queryAll(
     "SELECT * FROM active_users WHERE last_event = 'login' AND login_at >= ? ORDER BY login_at DESC",
     [freshAfter]
   );
-  return rows.map((r: any) => ({
+  // Deduplicate by MAC address (prefer) or username. Keep the most recent entry.
+  const seen = new Map<string, any>();
+  for (const r of rows) {
+    const key = (r.mac || '').trim().toUpperCase() || (r.user || '').trim().toUpperCase();
+    if (!key) continue;
+    // Keep the first (most recent due to ORDER BY login_at DESC)
+    if (!seen.has(key)) {
+      seen.set(key, r);
+    }
+  }
+  const unique = Array.from(seen.values());
+  return unique.map((r: any) => ({
     id: r.id, user: r.user, code: r.code,
     mac: r.mac || '', ip: r.ip || '',
     package_name: r.package_name || '',
@@ -560,14 +571,14 @@ export function getConnectedUsers(): ActiveUser[] {
   }));
 }
 
-/** Get total count of unique connected users (same 5-min window as getConnectedUsers) */
+/** Get total count of unique connected users (deduplicated by MAC) */
 export function getConnectedUsersCount(): number {
   const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-  const row = queryOne(
-    "SELECT COUNT(DISTINCT mac) as c FROM active_users WHERE last_event = 'login' AND login_at >= ?",
+  const rows = queryAll(
+    "SELECT DISTINCT mac FROM active_users WHERE last_event = 'login' AND login_at >= ? AND mac IS NOT NULL AND mac != ''",
     [freshAfter]
   );
-  return row?.c || 0;
+  return rows.length;
 }
 
 /* ── Clear all data (for reset) ── */
