@@ -606,14 +606,11 @@ router.get('/api/fix-onlogin.rsc', (req: Request, res: Response) => {
 
 `;
 
-  // Escape ? as \? for RSC parser (MikroTik eats bare ? like terminal does)
-  const rscCallbackUrl = callbackUrl.replace(/\?/g, '\\\\?');
-
   for (const profile of profiles) {
     const escapedProfile = escapeRsc(profile);
     // Build the on-login value: we need proper RSC escaping
     // The value is: :global url "CALLBACK_URL"; /tool fetch url=$url
-    const onLoginValue = `:global url "${rscCallbackUrl}"; /tool fetch url=$url`;
+    const onLoginValue = `:global url "${callbackUrl}"; /tool fetch url=$url`;
     const escapedOnLogin = escapeRsc(onLoginValue);
     script += `/ip hotspot user profile set [find name="${escapedProfile}"] on-login="${escapedOnLogin}"
 `;
