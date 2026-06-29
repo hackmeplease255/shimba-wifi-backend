@@ -173,6 +173,24 @@ router.post('/api/admin/change-password', auth_1.adminAuth, (req, res) => {
     res.json({ success: true, message: 'Password imebadilishwa kikamilifu!' });
 });
 
+/* ── Bandwidth usage stats (daily, weekly, monthly) ── */
+router.get('/api/admin/usage', auth_1.adminAuth, (req, res) => {
+    const view = String(req.query.view || 'daily');
+    let data;
+    switch (view) {
+        case 'weekly':
+            data = (0, db_1.getUsageByWeek)(Number(req.query.period) || 12);
+            break;
+        case 'monthly':
+            data = (0, db_1.getUsageByMonth)(Number(req.query.period) || 12);
+            break;
+        default:
+            data = (0, db_1.getUsageByDay)(Number(req.query.period) || 14);
+    }
+    const total = (0, db_1.getTotalUsage)();
+    res.json({ success: true, usage: data, total });
+});
+
 /* ── Disconnect a user (force logout from hotspot) ── */
 router.post('/api/admin/disconnect-user', auth_1.adminAuth, async (req, res) => {
     const { code, mac } = req.body || {};

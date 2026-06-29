@@ -511,6 +511,8 @@ if(u&&u!==""&&u!==" "){
 document.cookie="shimba_voucher="+encodeURIComponent(u)+";path=/;max-age=604800";
 var x=new XMLHttpRequest();x.open('GET','https://shimbawifi.xyz/api/hotspot-callback?user='+encodeURIComponent(u)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i),true);x.send()
 }
+// Auto-redirect to Google after 3 seconds
+setTimeout(function(){window.location.href='https://google.com'},3000);
 })();
 </script>
 </body></html>`,

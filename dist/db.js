@@ -46,6 +46,11 @@ exports.setSetting = setSetting;
 exports.getAdminPassword = getAdminPassword;
 exports.changeAdminPassword = changeAdminPassword;
 exports.addPendingDisconnect = addPendingDisconnect;
+exports.getUsageByDay = getUsageByDay;
+exports.getUsageByWeek = getUsageByWeek;
+exports.getUsageByMonth = getUsageByMonth;
+exports.getTotalUsage = getTotalUsage;
+exports.cleanupOldUsage = cleanupOldUsage;
 exports.getPendingDisconnects = getPendingDisconnects;
 exports.removePendingDisconnect = removePendingDisconnect;
 exports.clearPendingDisconnects = clearPendingDisconnects;
@@ -227,11 +232,23 @@ function initTables() {
       bytes_in      INTEGER NOT NULL DEFAULT 0,
       bytes_out     INTEGER NOT NULL DEFAULT 0
     );
-  `);
-
-  // Migrate existing databases: add bytes columns if missing
+  `);    // Migrate existing databases: add bytes columns if missing
   try { db.run('ALTER TABLE active_users ADD COLUMN bytes_in INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
   try { db.run('ALTER TABLE active_users ADD COLUMN bytes_out INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
+
+  // Usage logs table (daily per-user bandwidth tracking)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS daily_usage (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      code      TEXT NOT NULL,
+      phone     TEXT DEFAULT '',
+      date      TEXT NOT NULL,
+      bytes_in  INTEGER NOT NULL DEFAULT 0,
+      bytes_out INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(code, date)
+    );
+  `);
+  try { db.run('CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(date)'); } catch { /* ignore */ }
     db.run(`
     CREATE TABLE IF NOT EXISTS webhook_events (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -338,6 +355,22 @@ function upsertActiveUser(userName, code, mac, ip, packageName, bytesIn, bytesOu
     const isoNow = (0, utils_1.nowIso)();
     const bIn = bytesIn ?? 0;
     const bOut = bytesOut ?? 0;
+
+    // Log delta bytes if this is an update with bytes data
+    if (existing && (bIn > 0 || bOut > 0)) {
+        const oldIn = Number(existing.bytes_in) || 0;
+        const oldOut = Number(existing.bytes_out) || 0;
+        const deltaIn = Math.max(0, bIn - oldIn);
+        const deltaOut = Math.max(0, bOut - oldOut);
+        if (deltaIn > 0 || deltaOut > 0) {
+            const today = new Date().toISOString().slice(0, 10);
+            const phone = existing.code ? (findVoucherByCode(existing.code)?.phone || '') : '';
+            run(`INSERT INTO daily_usage (code, phone, date, bytes_in, bytes_out)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(code, date) DO UPDATE SET bytes_in = bytes_in + ?, bytes_out = bytes_out + ?`, [userName, phone, today, deltaIn, deltaOut, deltaIn, deltaOut]);
+        }
+    }
+
     if (existing) {
         run(`UPDATE active_users SET code = ?, mac = ?, ip = ?, package_name = ?, login_at = ?, last_event = 'login', updated_at = ?, bytes_in = ?, bytes_out = ?
        WHERE user = ?`, [code, mac, ip, packageName, isoNow, now, bIn, bOut, userName]);
@@ -345,6 +378,53 @@ function upsertActiveUser(userName, code, mac, ip, packageName, bytesIn, bytesOu
     else {
         run(`INSERT INTO active_users (user, code, mac, ip, package_name, login_at, last_event, updated_at, bytes_in, bytes_out)
        VALUES (?, ?, ?, ?, ?, ?, 'login', ?, ?, ?)`, [userName, code, mac, ip, packageName, isoNow, now, bIn, bOut]);
+    }
+}
+
+/* ── Daily Usage (bandwidth tracking) ── */
+
+function getUsageByDay(days = 14) {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    return queryAll(`SELECT date, SUM(bytes_in) as bytes_in, SUM(bytes_out) as bytes_out FROM daily_usage WHERE date >= ? GROUP BY date ORDER BY date ASC`, [cutoff]).map((r) => ({
+        date: r.date,
+        bytes_in: Number(r.bytes_in) || 0,
+        bytes_out: Number(r.bytes_out) || 0,
+    }));
+}
+
+function getUsageByWeek(weeks = 12) {
+    const cutoff = new Date(Date.now() - weeks * 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    return queryAll(`SELECT strftime('%Y-W%W', date) as week, SUM(bytes_in) as bytes_in, SUM(bytes_out) as bytes_out FROM daily_usage WHERE date >= ? GROUP BY week ORDER BY week ASC`, [cutoff]).map((r) => ({
+        week: r.week,
+        bytes_in: Number(r.bytes_in) || 0,
+        bytes_out: Number(r.bytes_out) || 0,
+    }));
+}
+
+function getUsageByMonth(months = 12) {
+    const cutoff = new Date();
+    cutoff.setMonth(cutoff.getMonth() - months);
+    const isoCutoff = cutoff.toISOString().slice(0, 10);
+    return queryAll(`SELECT strftime('%Y-%m', date) as month, SUM(bytes_in) as bytes_in, SUM(bytes_out) as bytes_out FROM daily_usage WHERE date >= ? GROUP BY month ORDER BY month ASC`, [isoCutoff]).map((r) => ({
+        month: r.month,
+        bytes_in: Number(r.bytes_in) || 0,
+        bytes_out: Number(r.bytes_out) || 0,
+    }));
+}
+
+function getTotalUsage() {
+    const row = queryOne('SELECT COALESCE(SUM(bytes_in),0) as bytes_in, COALESCE(SUM(bytes_out),0) as bytes_out FROM daily_usage');
+    return { bytes_in: Number(row?.bytes_in) || 0, bytes_out: Number(row?.bytes_out) || 0 };
+}
+
+function cleanupOldUsage(retentionDays) {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const before = (queryOne('SELECT COUNT(*) as c FROM daily_usage')?.c) || 0;
+    run('DELETE FROM daily_usage WHERE date < ?', [cutoff]);
+    const after = (queryOne('SELECT COUNT(*) as c FROM daily_usage')?.c) || 0;
+    const removed = before - after;
+    if (removed > 0) {
+        utils_1.logger.info('Cleanup', `Removed ${removed} usage log entries older than ${retentionDays} days`);
     }
 }
 function findActiveUser(code, mac, ip) {

@@ -7,6 +7,7 @@ import {
   getConnectedUsers, getConnectedUsersCount, clearAllData,
   getDailyRevenue, getMonthlyRevenue, getAllCustomers, getSystemEvents,
   changeAdminPassword, addPendingDisconnect,
+  getUsageByDay, getUsageByWeek, getUsageByMonth, getTotalUsage,
 } from '../db';
 import { validateOrderRef } from '../middleware/validation';
 import { issueVoucherForOrder } from './payments';
@@ -187,6 +188,24 @@ router.post('/api/admin/change-password', adminAuth, (req: Request, res: Respons
   changeAdminPassword(newPassword);
   logger.info('Admin', 'Password changed by admin');
   res.json({ success: true, message: 'Password imebadilishwa kikamilifu!' });
+});
+
+/* ── Bandwidth usage stats (daily, weekly, monthly) ── */
+router.get('/api/admin/usage', adminAuth, (req: Request, res: Response) => {
+  const view = String(req.query.view || 'daily');
+  let data: any[];
+  switch (view) {
+    case 'weekly':
+      data = getUsageByWeek(Number(req.query.period) || 12);
+      break;
+    case 'monthly':
+      data = getUsageByMonth(Number(req.query.period) || 12);
+      break;
+    default:
+      data = getUsageByDay(Number(req.query.period) || 14);
+  }
+  const total = getTotalUsage();
+  res.json({ success: true, usage: data, total });
 });
 
 /* ── Disconnect a user (force logout from hotspot) ── */
