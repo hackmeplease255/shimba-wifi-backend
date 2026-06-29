@@ -494,7 +494,14 @@ $(endif)
 <div class="ft">SHIMBA WiFi &bull; Furahia internet ya kasi!</div>
 </div>
 <script>
-(function(){var u="$(username)";var m="$(mac)";var i="$(ip)";if(u&&u!==""&&u!==" "){var x=new XMLHttpRequest();x.open('GET','https://shimbawifi.xyz/api/hotspot-callback?user='+encodeURIComponent(u)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i),true);x.send()}})();
+(function(){
+var u="$(username)";var m="$(mac)";var i="$(ip)";
+// Save voucher in cookie for auto-reconnect (MikroTik domain)
+if(u&&u!==""&&u!==" "){
+document.cookie="shimba_voucher="+encodeURIComponent(u)+";path=/;max-age=604800";
+var x=new XMLHttpRequest();x.open('GET','https://shimbawifi.xyz/api/hotspot-callback?user='+encodeURIComponent(u)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i),true);x.send()
+}
+})();
 </script>
 </body></html>`,
 
@@ -515,9 +522,66 @@ body{background:linear-gradient(180deg,#070b14,#0b1220);color:#eaf2ff;font-famil
 <div class="sp"></div>
 </div>
 <script>
-(function(){var u="$(username)";var m="$(mac)";var i="$(ip)";if(u&&u!==""&&u!==" "){var x=new XMLHttpRequest();x.open('GET','https://shimbawifi.xyz/api/hotspot-callback?user='+encodeURIComponent(u)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i),true);x.send()}location.href="https://shimba-wifi-hub.vercel.app/?mac="+encodeURIComponent(m)+"&ip="+encodeURIComponent(i)+"&link-status=$(link-status)"})();
+(function(){var u="$(username)";var m="$(mac)";var i="$(ip)";if(u&&u!==""&&u!==" "){
+document.cookie="shimba_voucher="+encodeURIComponent(u)+";path=/;max-age=604800";
+var x=new XMLHttpRequest();x.open('GET','https://shimbawifi.xyz/api/hotspot-callback?user='+encodeURIComponent(u)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i),true);x.send()
+}location.href="https://shimba-wifi-hub.vercel.app/?mac="+encodeURIComponent(m)+"&ip="+encodeURIComponent(i)+"&link-status=$(link-status)"})();
 </script>
 </body></html>`,
+
+  'login.html': `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHIMBA WIFI</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:linear-gradient(180deg,#070b14,#0b1220);color:#eaf2ff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:20px}
+.c{max-width:400px;width:100%}
+.l{font-size:48px;margin-bottom:8px}
+h1{font-size:22px;font-weight:900;margin-bottom:4px;background:linear-gradient(135deg,#22d3ee,#93c5fd);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.p{font-size:13px;color:#8aa0c4;margin-bottom:20px}
+.inp{width:100%;padding:12px 16px;border-radius:12px;border:1px solid #1f2a44;background:#0a1426;color:#eaf2ff;font-size:15px;text-align:center;font-family:monospace;letter-spacing:3px;outline:none;margin-bottom:10px}
+.inp:focus{border-color:#22d3ee}
+.btn{width:100%;padding:14px;border-radius:14px;border:none;background:linear-gradient(135deg,#22d3ee,#3b82f6);color:#001018;font-size:15px;font-weight:800;cursor:pointer;margin-top:4px}
+.btn:active{transform:translateY(1px)}
+.err{color:#fca5a5;font-size:13px;margin-top:10px;background:rgba(239,68,68,0.1);padding:8px 12px;border-radius:8px;border:1px solid rgba(239,68,68,0.2)}
+.ft{font-size:11px;color:#4a5f80;margin-top:20px}
+a{color:#22d3ee;text-decoration:none}
+</style></head>
+<body>
+$(if error == "")
+<!-- No error — show form normally -->
+$(else)
+<div class="err">\u26A0 $(error)</div>
+$(endif)
+<div class="c">
+<div class="l">\uD83D\uDCF6</div>
+<h1>SHIMBA WIFI</h1>
+<p class="p">Unganisha na SHIMBA WiFi</p>
+
+<form method="post" action="$(link-login)" id="loginForm">
+<input class="inp" name="username" id="username" type="text" placeholder="Voucher code" value="$(username)" autocomplete="off">
+<input class="inp" name="password" id="password" type="password" placeholder="Password" value="$(password)">
+<button class="btn" type="submit">\uD83D\uDEE1 Ingia kwenye WiFi</button>
+</form>
+
+<p class="p" style="margin-top:16px">Huna voucher? <a href="https://shimba-wifi-hub.vercel.app" target="_blank">Nunua hapa \u2197</a></p>
+<div class="ft">SHIMBA WiFi</div>
+</div>
+<script>
+(function(){
+function getCookie(n){var m=document.cookie.match(new RegExp('(^| )'+n+'=([^;]+)'));return m?decodeURIComponent(m[2]):null}
+var saved=getCookie('shimba_voucher');
+if(saved&&!document.getElementById('username').value){
+document.getElementById('username').value=saved;
+document.getElementById('password').value=saved;
+setTimeout(function(){document.getElementById('loginForm').submit()},100)
+}
+})();
+</script>
+</body>
+</html>`,
 };
 
 router.get('/mt-files/:file', (req: Request, res: Response) => {
