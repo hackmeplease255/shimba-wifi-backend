@@ -4,6 +4,7 @@ import {
   findVoucherByCode, upsertActiveUser, findActiveUser,
   getRecentVouchers, markVoucherSynced, markVoucherExpired,
   saveMacAssociation, findMacAssociation, isVoucherExpired, deleteMacAssociation,
+  queryAll,
 } from '../db';
 import { escapeRsc, nowIso, nowString, logger } from '../utils';
 
@@ -287,7 +288,25 @@ router.get('/api/auto-connect', (req: Request, res: Response) => {
   res.json({ auto: false });
 });
 
-/* ── Associate a MAC address with a voucher code ── */
+/* ── Associate a MAC address with a voucher code (GET — for alogin.html fallback) ── */
+router.get('/api/associate-mac', (req: Request, res: Response) => {
+  const mac = String(req.query.mac || '').trim().toUpperCase();
+  const code = String(req.query.code || '').trim().toUpperCase();
+  const ip = String(req.query.ip || '').trim();
+  if (!mac || !code) {
+    return res.json({ success: false });
+  }
+  const voucher = findVoucherByCode(code);
+  if (!voucher) {
+    return res.json({ success: false, message: 'Voucher not found' });
+  }
+  saveMacAssociation(mac, voucher.code, voucher.package_name);
+  upsertActiveUser(voucher.code, voucher.code, mac, ip, voucher.package_name);
+  logger.info('Hotspot', 'MAC associated via GET (for alogin fallback)', { mac, code: voucher.code, ip });
+  res.json({ success: true });
+});
+
+/* ── Associate a MAC address with a voucher code (POST — for portal) ── */
 router.post('/api/associate-mac', (req: Request, res: Response) => {
   const { mac, code, ip } = req.body || {};
   if (!mac || !code) {
@@ -317,14 +336,25 @@ router.post('/api/associate-mac', (req: Request, res: Response) => {
  * Called by JavaScript in hotspot/status.html and hotspot/alogin.html
  * AFTER the user has successfully logged in through MikroTik.
  * At this point the user has full internet access (block bypassed).
+ *
+ * If MAC is empty (some MikroTik versions), tries to get it from
+ * an existing MAC association for this voucher code.
  */
 router.get('/api/hotspot-callback', (req: Request, res: Response) => {
   const user = String(req.query.user || '').trim().toUpperCase();
-  const mac = String(req.query.mac || '').trim().toUpperCase();
+  let mac = String(req.query.mac || '').trim().toUpperCase();
   const ip = String(req.query.ip || '').trim();
 
   if (!user) {
     return res.status(400).send('missing user');
+  }
+
+  // If MAC is empty, try to find it from active_users records for this user
+  if (!mac) {
+    const rows = queryAll('SELECT mac FROM active_users WHERE user = ? AND mac IS NOT NULL AND mac != ? ORDER BY updated_at DESC LIMIT 1', [user, '']);
+    if (rows.length > 0 && rows[0].mac && String(rows[0].mac).trim() !== '') {
+      mac = String(rows[0].mac).toUpperCase();
+    }
   }
 
   const voucher = findVoucherByCode(user);

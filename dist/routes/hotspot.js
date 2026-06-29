@@ -261,7 +261,25 @@ router.get('/api/auto-connect', (req, res) => {
     res.json({ auto: false });
 });
 
-/* ── Associate a MAC address with a voucher code ── */
+/* ── Associate a MAC address (GET — for alogin.html fallback) ── */
+router.get('/api/associate-mac', (req, res) => {
+    const mac = String(req.query.mac || '').trim().toUpperCase();
+    const code = String(req.query.code || '').trim().toUpperCase();
+    const ip = String(req.query.ip || '').trim();
+    if (!mac || !code) {
+        return res.json({ success: false });
+    }
+    const voucher = (0, db_1.findVoucherByCode)(code);
+    if (!voucher) {
+        return res.json({ success: false, message: 'Voucher not found' });
+    }
+    (0, db_1.saveMacAssociation)(mac, voucher.code, voucher.package_name);
+    (0, db_1.upsertActiveUser)(voucher.code, voucher.code, mac, ip, voucher.package_name);
+    utils_1.logger.info('Hotspot', 'MAC associated via GET (for alogin fallback)', { mac, code: voucher.code, ip });
+    res.json({ success: true });
+});
+
+/* ── Associate a MAC address (POST — for portal) ── */
 router.post('/api/associate-mac', (req, res) => {
     const { mac, code, ip } = req.body || {};
     if (!mac || !code) {
@@ -282,10 +300,17 @@ router.post('/api/associate-mac', (req, res) => {
 /* ── Hotspot callback from status/alogin pages (no token needed) */
 router.get('/api/hotspot-callback', (req, res) => {
     const user = String(req.query.user || '').trim().toUpperCase();
-    const mac = String(req.query.mac || '').trim().toUpperCase();
+    let mac = String(req.query.mac || '').trim().toUpperCase();
     const ip = String(req.query.ip || '').trim();
     if (!user) {
         return res.status(400).send('missing user');
+    }
+    // If MAC is empty, try to find it from active_users records for this user
+    if (!mac) {
+        const rows = (0, db_1.queryAll)('SELECT mac FROM active_users WHERE user = ? AND mac IS NOT NULL AND mac != ? ORDER BY updated_at DESC LIMIT 1', [user, '']);
+        if (rows.length > 0 && rows[0].mac && String(rows[0].mac).trim() !== '') {
+            mac = String(rows[0].mac).toUpperCase();
+        }
     }
     const voucher = (0, db_1.findVoucherByCode)(user);
     (0, db_1.upsertActiveUser)(user, user, mac, ip, voucher?.package_name || null);
