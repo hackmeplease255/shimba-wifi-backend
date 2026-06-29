@@ -544,11 +544,11 @@ export function deleteMacAssociation(mac: string): void {
 
 /* ── Connected Users (real-time active sessions) ── */
 
-/** Get users currently connected (deduplicated by MAC, last_event='login' within last 5 minutes) */
+/** Get users recently active (deduplicated by MAC, any event within last 5 minutes) */
 export function getConnectedUsers(): ActiveUser[] {
   const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const rows = queryAll(
-    "SELECT * FROM active_users WHERE last_event = 'login' AND login_at >= ? ORDER BY login_at DESC",
+    "SELECT * FROM active_users WHERE updated_at >= ? ORDER BY updated_at DESC",
     [freshAfter]
   );
   // Deduplicate by MAC address (prefer) or username. Keep the most recent entry.
