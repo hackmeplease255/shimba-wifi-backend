@@ -428,6 +428,7 @@ $(endif)
 </div>
 <script>
 ${COOKIE_SCRIPT}
+setTimeout(function(){window.location.href="https://google.com"},3000);
 </script>
 </body></html>`,
     'alogin.html': `<!DOCTYPE html>
