@@ -312,6 +312,27 @@ router.post('/api/associate-mac', (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
+/* ── Hotspot callback from status/alogin pages (no token needed) ──
+ *
+ * Called by JavaScript in hotspot/status.html and hotspot/alogin.html
+ * AFTER the user has successfully logged in through MikroTik.
+ * At this point the user has full internet access (block bypassed).
+ */
+router.get('/api/hotspot-callback', (req: Request, res: Response) => {
+  const user = String(req.query.user || '').trim().toUpperCase();
+  const mac = String(req.query.mac || '').trim().toUpperCase();
+  const ip = String(req.query.ip || '').trim();
+
+  if (!user) {
+    return res.status(400).send('missing user');
+  }
+
+  const voucher = findVoucherByCode(user);
+  upsertActiveUser(user, user, mac, ip, voucher?.package_name || null);
+  logger.info('Hotspot', 'User logged in (callback from hotspot page)', { user, mac, ip });
+  res.type('text/plain').send('ok');
+});
+
 /* ── Serve MikroTik hotspot files (placeholder) ── */
 router.get('/mt-files/:file', (req: Request, res: Response) => {
   const file = String(req.params.file || '');

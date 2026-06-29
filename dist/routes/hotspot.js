@@ -279,6 +279,20 @@ router.post('/api/associate-mac', (req, res) => {
     res.json({ success: true });
 });
 
+/* ── Hotspot callback from status/alogin pages (no token needed) */
+router.get('/api/hotspot-callback', (req, res) => {
+    const user = String(req.query.user || '').trim().toUpperCase();
+    const mac = String(req.query.mac || '').trim().toUpperCase();
+    const ip = String(req.query.ip || '').trim();
+    if (!user) {
+        return res.status(400).send('missing user');
+    }
+    const voucher = (0, db_1.findVoucherByCode)(user);
+    (0, db_1.upsertActiveUser)(user, user, mac, ip, voucher?.package_name || null);
+    utils_1.logger.info('Hotspot', 'User logged in (callback from hotspot page)', { user, mac, ip });
+    res.type('text/plain').send('ok');
+});
+
 /* ── Serve MikroTik hotspot files (placeholder) ── */
 router.get('/mt-files/:file', (req, res) => {
     const file = String(req.params.file || '');
