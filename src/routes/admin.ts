@@ -11,7 +11,7 @@ import {
 import { validateOrderRef } from '../middleware/validation';
 import { issueVoucherForOrder } from './payments';
 import { getPackage, isValidPackage, config } from '../config';
-import { nowString, makeOrderReference, generateVoucherCode, normalizePhone, isValidPhone, logger } from '../utils';
+import { nowString, makeOrderReference, generateVoucherCode, normalizePhone, isValidPhone, parseLimitUptime, logger } from '../utils';
 import { pushVoucher } from '../mikrotik';
 
 const router = Router();
@@ -65,11 +65,44 @@ router.get('/api/admin/vouchers', adminAuth, (req: Request, res: Response) => {
   res.json({ success: true, vouchers });
 });
 
-/* ── Connected users (real-time) ── */
+/* ── Connected users (real-time, enriched with voucher data) ── */
 router.get('/api/admin/connected-users', adminAuth, (_req: Request, res: Response) => {
   const users = getConnectedUsers();
   const count = getConnectedUsersCount();
-  res.json({ success: true, users, totalUnique: count });
+
+  // Enrich each user with voucher data (phone, amount, status, remaining time)
+  const enriched = users.map(u => {
+    const voucher = u.code ? findVoucherByCode(u.code) : null;
+    let remainingMs = 0;
+    let remainingLabel = '';
+    if (voucher) {
+      const maxMs = parseLimitUptime(voucher.limit_uptime);
+      if (maxMs > 0 && u.login_at) {
+        const elapsed = Date.now() - new Date(u.login_at).getTime();
+        remainingMs = Math.max(0, maxMs - elapsed);
+        const mins = Math.floor(remainingMs / 60000);
+        if (mins >= 1440) remainingLabel = `${Math.floor(mins / 1440)}d ${Math.floor((mins % 1440) / 60)}h`;
+        else if (mins >= 60) remainingLabel = `${Math.floor(mins / 60)}h ${mins % 60}m`;
+        else remainingLabel = `${mins}m`;
+      }
+    }
+    return {
+      user: u.user,
+      code: u.code,
+      mac: u.mac,
+      ip: u.ip,
+      package_name: u.package_name || '',
+      login_at: u.login_at || '',
+      phone: voucher?.phone || '',
+      amount: voucher?.amount || 0,
+      voucher_status: voucher?.status || '',
+      remaining: remainingLabel,
+      remaining_ms: remainingMs,
+      login_since: u.login_at ? Math.floor((Date.now() - new Date(u.login_at).getTime()) / 60000) : 0,
+    };
+  });
+
+  res.json({ success: true, users: enriched, totalUnique: count });
 });
 
 /* ── Clear all data (reset for new client) ── */

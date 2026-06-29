@@ -544,9 +544,9 @@ export function deleteMacAssociation(mac: string): void {
 
 /* ── Connected Users (real-time active sessions) ── */
 
-/** Get users currently connected (last_event='login' within last 10 minutes) */
+/** Get users currently connected (last_event='login' within last 5 minutes) */
 export function getConnectedUsers(): ActiveUser[] {
-  const freshAfter = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const rows = queryAll(
     "SELECT * FROM active_users WHERE last_event = 'login' AND login_at >= ? ORDER BY login_at DESC",
     [freshAfter]
@@ -560,12 +560,12 @@ export function getConnectedUsers(): ActiveUser[] {
   }));
 }
 
-/** Get total count of unique connected users in last hour */
+/** Get total count of unique connected users (same 5-min window as getConnectedUsers) */
 export function getConnectedUsersCount(): number {
-  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const row = queryOne(
     "SELECT COUNT(DISTINCT mac) as c FROM active_users WHERE last_event = 'login' AND login_at >= ?",
-    [hourAgo]
+    [freshAfter]
   );
   return row?.c || 0;
 }
