@@ -219,9 +219,15 @@ function initTables() {
       package_name  TEXT,
       login_at      TEXT,
       last_event    TEXT,
-      updated_at    TEXT NOT NULL
+      updated_at    TEXT NOT NULL,
+      bytes_in      INTEGER NOT NULL DEFAULT 0,
+      bytes_out     INTEGER NOT NULL DEFAULT 0
     );
   `);
+
+  // Migrate existing databases: add bytes columns if missing
+  try { db.run('ALTER TABLE active_users ADD COLUMN bytes_in INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
+  try { db.run('ALTER TABLE active_users ADD COLUMN bytes_out INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
     db.run(`
     CREATE TABLE IF NOT EXISTS webhook_events (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -322,17 +328,19 @@ function logSms(phone, code, orderRef, sent, provider, response) {
     run('INSERT INTO sms_logs (phone, code, order_reference, sent, provider, response, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [(0, utils_1.normalizePhone)(phone), code, orderRef, sent ? 1 : 0, provider, response, (0, utils_1.nowString)()]);
 }
 /* ── Active Users ── */
-function upsertActiveUser(userName, code, mac, ip, packageName) {
+function upsertActiveUser(userName, code, mac, ip, packageName, bytesIn, bytesOut) {
     const existing = queryOne('SELECT * FROM active_users WHERE user = ?', [userName]);
     const now = (0, utils_1.nowString)();
     const isoNow = (0, utils_1.nowIso)();
+    const bIn = bytesIn ?? 0;
+    const bOut = bytesOut ?? 0;
     if (existing) {
-        run(`UPDATE active_users SET code = ?, mac = ?, ip = ?, package_name = ?, login_at = ?, last_event = 'login', updated_at = ?
-       WHERE user = ?`, [code, mac, ip, packageName, isoNow, now, userName]);
+        run(`UPDATE active_users SET code = ?, mac = ?, ip = ?, package_name = ?, login_at = ?, last_event = 'login', updated_at = ?, bytes_in = ?, bytes_out = ?
+       WHERE user = ?`, [code, mac, ip, packageName, isoNow, now, bIn, bOut, userName]);
     }
     else {
-        run(`INSERT INTO active_users (user, code, mac, ip, package_name, login_at, last_event, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'login', ?)`, [userName, code, mac, ip, packageName, isoNow, now]);
+        run(`INSERT INTO active_users (user, code, mac, ip, package_name, login_at, last_event, updated_at, bytes_in, bytes_out)
+       VALUES (?, ?, ?, ?, ?, ?, 'login', ?, ?, ?)`, [userName, code, mac, ip, packageName, isoNow, now, bIn, bOut]);
     }
 }
 function findActiveUser(code, mac, ip) {
@@ -376,8 +384,8 @@ function saveMacAssociation(mac, code, packageName) {
         run(`UPDATE active_users SET code = ?, package_name = ?, last_event = 'associated', updated_at = ? WHERE mac = ? AND last_event = 'associated'`, [code.toUpperCase(), packageName, now, normalizedMac]);
     }
     else {
-        run(`INSERT INTO active_users (user, code, mac, ip, package_name, login_at, last_event, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'associated', ?)`, [code.toUpperCase(), code.toUpperCase(), normalizedMac, '', packageName, (0, utils_1.nowIso)(), now]);
+        run(`INSERT INTO active_users (user, code, mac, ip, package_name, login_at, last_event, updated_at, bytes_in, bytes_out)
+       VALUES (?, ?, ?, ?, ?, ?, 'associated', ?, 0, 0)`, [code.toUpperCase(), code.toUpperCase(), normalizedMac, '', packageName, (0, utils_1.nowIso)(), now]);
     }
 }
 
@@ -460,6 +468,8 @@ function getConnectedUsers() {
         package_name: r.package_name || '',
         login_at: r.login_at || '',
         last_event: r.last_event, updated_at: r.updated_at,
+        bytes_in: Number(r.bytes_in) || 0,
+        bytes_out: Number(r.bytes_out) || 0,
     }));
 }
 

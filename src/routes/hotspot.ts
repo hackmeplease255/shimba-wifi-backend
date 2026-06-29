@@ -601,14 +601,16 @@ setTimeout(function(){document.getElementById('loginForm').submit()},100)
  * and that RSC script loops through active sessions calling this endpoint.
  * No `?` in URL to avoid MikroTik help-key eating the query string.
  */
-router.get('/api/capture-active/:user/:mac/:ip', (req: Request, res: Response) => {
+router.get('/api/capture-active/:user/:mac/:ip/:bytesIn?/:bytesOut?', (req: Request, res: Response) => {
   const user = String(req.params.user || '').trim().toUpperCase();
   const mac = String(req.params.mac || '').trim().toUpperCase();
   const ip = String(req.params.ip || '').trim();
+  const bytesIn = parseInt(String(req.params.bytesIn || '0'), 10) || 0;
+  const bytesOut = parseInt(String(req.params.bytesOut || '0'), 10) || 0;
 
   if (user) {
     const voucher = findVoucherByCode(user);
-    upsertActiveUser(user, user, mac, ip, voucher?.package_name || null);
+    upsertActiveUser(user, user, mac, ip, voucher?.package_name || null, bytesIn, bytesOut);
   }
 
   res.type('text/plain').send('ok');
@@ -682,7 +684,9 @@ router.get('/api/hotspot-actives.rsc', (req: Request, res: Response) => {
   :local u [/ip hotspot active get $i user]
   :local m [/ip hotspot active get $i mac-address]
   :local a [/ip hotspot active get $i address]
-  /tool fetch url="${baseUrl}/api/capture-active/$u/$m/$a" keep-result=no
+  :local bi [/ip hotspot active get $i bytes-in]
+  :local bo [/ip hotspot active get $i bytes-out]
+  /tool fetch url="${baseUrl}/api/capture-active/$u/$m/$a/$bi/$bo" keep-result=no
 }
 `;
 

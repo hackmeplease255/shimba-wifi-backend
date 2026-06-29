@@ -99,6 +99,8 @@ router.get('/api/admin/connected-users', adminAuth, (_req: Request, res: Respons
       remaining: remainingLabel,
       remaining_ms: remainingMs,
       login_since: u.login_at ? Math.floor((Date.now() - new Date(u.login_at).getTime()) / 60000) : 0,
+      bytes_in: u.bytes_in || 0,
+      bytes_out: u.bytes_out || 0,
     };
   });
 
