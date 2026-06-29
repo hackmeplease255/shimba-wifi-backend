@@ -333,18 +333,94 @@ router.get('/api/hotspot-callback', (req: Request, res: Response) => {
   res.type('text/plain').send('ok');
 });
 
-/* ── Serve MikroTik hotspot files (placeholder) ── */
+/* ── Serve MikroTik hotspot files ──
+ *
+ * These HTML files are served from the backend so the user can download
+ * them to MikroTik using:
+ *   /tool fetch url="https://shimbawifi.xyz/mt-files/status.html"
+ *   /tool fetch url="https://shimbawifi.xyz/mt-files/alogin.html"
+ *   /tool fetch url="https://shimbawifi.xyz/mt-files/login.html"
+ *
+ * The status.html and alogin.html include JavaScript that calls
+ * /api/hotspot-callback AFTER the user authenticates (when internet
+ * is available), recording the login in active_users.
+ */
+
+const HOTSPOT_FILES: Record<string, string> = {
+  'status.html': `<!DOCTYPE html>
+<html>
+<head><title>SHIMBA WIFI — Connected</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:linear-gradient(180deg,#070b14,#0b1220);color:#eaf2ff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:20px}
+.container{max-width:420px;width:100%}
+.icon{font-size:48px;margin-bottom:12px}
+h1{font-size:22px;font-weight:900;margin-bottom:8px}
+.badge{display:inline-block;padding:4px 16px;border-radius:20px;background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);color:#6ee7b7;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:20px}
+.card{background:rgba(17,26,46,0.8);border:1px solid #1f2a44;border-radius:16px;padding:16px;text-align:left;margin-bottom:16px}
+.row{display:flex;justify-content:space-between;padding:8px 0;font-size:13px}
+.row:not(:last-child){border-bottom:1px solid rgba(31,42,68,0.5)}
+.lbl{color:#6b7fa0}
+.val{color:#eaf2ff;font-weight:600}
+.btn{display:block;padding:12px 20px;border-radius:12px;border:none;background:linear-gradient(135deg,#22d3ee,#3b82f6);color:#001018;font-size:15px;font-weight:800;cursor:pointer;text-decoration:none;margin-top:8px}
+.btno{background:transparent;border:1px solid #1f2a44;color:#8aa0c4}
+.ft{font-size:11px;color:#4a5f80;margin-top:24px}
+</style></head>
+<body><div class="container">
+$(if error == "already-logged-in")
+<div class="icon">\uD83D\uDD04</div><h1>Tayari Umeingia</h1><p style="color:#8aa0c4;font-size:14px;margin-bottom:16px">You are already connected.</p>
+$(else)
+<div class="icon">\u2705</div><h1>Umeingia!</h1><div class="badge">Connected</div>
+$(endif)
+<div class="card">
+<div class="row"><span class="lbl">Voucher Code</span><span class="val">$(username)</span></div>
+<div class="row"><span class="lbl">MAC Address</span><span class="val">$(mac)</span></div>
+<div class="row"><span class="lbl">IP Address</span><span class="val">$(ip)</span></div>
+<div class="row"><span class="lbl">Bytes In/Out</span><span class="val">$(bytes-in-nice) / $(bytes-out-nice)</span></div>
+</div>
+<a href="$(link-logout)" class="btn btno">\u2716 Ondoka (Logout)</a>
+<div class="ft">SHIMBA WiFi &bull; Furahia internet ya kasi!</div>
+</div>
+<script>
+(function(){var u="$(username)";var m="$(mac)";var i="$(ip)";if(u&&u!==""&&u!==" "){var x=new XMLHttpRequest();x.open('GET','https://shimbawifi.xyz/api/hotspot-callback?user='+encodeURIComponent(u)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i),true);x.send()}})();
+</script>
+</body></html>`,
+
+  'alogin.html': `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHIMBA WIFI — Redirect</title>
+<meta http-equiv="refresh" content="0;url=https://shimba-wifi-hub.vercel.app/?mac=$(mac)&ip=$(ip)&link-status=$(link-status)">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:linear-gradient(180deg,#070b14,#0b1220);color:#eaf2ff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:20px;font-size:14px}
+.sp{width:28px;height:28px;border:3px solid #1f2a44;border-top-color:#22d3ee;border-radius:50%;animation:spin .8s linear infinite;margin:12px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style></head>
+<body><div>
+<p>Inaelekeza kwenye lango la huduma...</p>
+<div class="sp"></div>
+</div>
+<script>
+(function(){var u="$(username)";var m="$(mac)";var i="$(ip)";if(u&&u!==""&&u!==" "){var x=new XMLHttpRequest();x.open('GET','https://shimbawifi.xyz/api/hotspot-callback?user='+encodeURIComponent(u)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i),true);x.send()}location.href="https://shimba-wifi-hub.vercel.app/?mac="+encodeURIComponent(m)+"&ip="+encodeURIComponent(i)+"&link-status=$(link-status)"})();
+</script>
+</body></html>`,
+};
+
 router.get('/mt-files/:file', (req: Request, res: Response) => {
   const file = String(req.params.file || '');
   // Basic sanitize: only allow known hotspot files
   const basename = file.split('/').pop() || file;
-  if (!config.hotspotFiles.has(basename)) {
-    return res.status(404).json({ success: false, message: 'Hotspot file not found' });
+
+  if (config.hotspotFiles.has(basename) && HOTSPOT_FILES[basename]) {
+    res.type('text/html').send(HOTSPOT_FILES[basename]);
+    return;
   }
-  res.status(404).json({
-    success: false,
-    message: 'Hotspot files not hosted on this backend',
-  });
+
+  res.status(404).json({ success: false, message: 'Hotspot file not found' });
 });
 
 export default router;
