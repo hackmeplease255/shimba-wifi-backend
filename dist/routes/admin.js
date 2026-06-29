@@ -9,6 +9,7 @@ const payments_1 = require("./payments");
 const config_1 = require("../config");
 const utils_1 = require("../utils");
 const mikrotik_1 = require("../mikrotik");
+const { removeUser } = mikrotik_1;
 const router = (0, express_1.Router)();
 /* ── Admin login (get JWT token) ── */
 router.post('/api/admin/login', rateLimiter_1.adminLimiter, auth_1.loginHandler);
@@ -170,6 +171,45 @@ router.post('/api/admin/change-password', auth_1.adminAuth, (req, res) => {
     (0, db_1.changeAdminPassword)(newPassword);
     utils_1.logger.info('Admin', 'Password changed by admin');
     res.json({ success: true, message: 'Password imebadilishwa kikamilifu!' });
+});
+
+/* ── Disconnect a user (force logout from hotspot) ── */
+router.post('/api/admin/disconnect-user', auth_1.adminAuth, async (req, res) => {
+    const { code, mac } = req.body || {};
+    const userCode = String(code || '').trim().toUpperCase();
+    if (!userCode) {
+        return res.status(400).json({ success: false, message: 'Tafadhali toa voucher code ya mtumiaji' });
+    }
+    try {
+        // 1. Remove from active_users immediately
+        (0, db_1.run)('DELETE FROM active_users WHERE user = ? OR code = ?', [userCode, userCode]);
+        // Remove MAC association if provided
+        if (mac) {
+            (0, db_1.run)("DELETE FROM active_users WHERE mac = ? AND last_event = 'associated'", [mac.toUpperCase()]);
+        }
+        // 2. Try MikroTik API to remove hotspot user + kill session
+        const apiRemoved = await (0, mikrotik_1.removeUser)(userCode);
+        if (apiRemoved) {
+            utils_1.logger.info('Admin', `User ${userCode} disconnected via API`);
+            return res.json({
+                success: true,
+                message: 'Mtumiaji ametolewa kwenye mtandao kikamilifu!',
+                method: 'api',
+            });
+        }
+        // 3. API unreachable (private IP) — queue for RSC-based removal
+        (0, db_1.addPendingDisconnect)(userCode);
+        utils_1.logger.info('Admin', `User ${userCode} queued for RSC-based disconnect`);
+        res.json({
+            success: true,
+            message: 'Mtumiaji ametolewa kwenye database. Atatolewa kwenye MikroTik baada ya sync (sekunde 10-30).',
+            method: 'rsc_queue',
+        });
+    }
+    catch (e) {
+        utils_1.logger.error('Admin', 'Failed to disconnect user', { code: userCode, error: e.message });
+        res.status(500).json({ success: false, message: 'Imeshindikana kumtoa mtumiaji: ' + e.message });
+    }
 });
 
 /* ── Admin: Create voucher manually (without payment) ── */

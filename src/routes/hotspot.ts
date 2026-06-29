@@ -4,7 +4,7 @@ import {
   findVoucherByCode, upsertActiveUser, findActiveUser,
   getRecentVouchers, markVoucherSynced, markVoucherExpired,
   saveMacAssociation, findMacAssociation, isVoucherExpired, deleteMacAssociation,
-  queryAll, reportActiveSessions,
+  queryAll, reportActiveSessions, getPendingDisconnects, removePendingDisconnect, clearPendingDisconnects,
 } from '../db';
 import { escapeRsc, nowIso, nowString, logger } from '../utils';
 import { pushVoucher } from '../mikrotik';
@@ -63,11 +63,21 @@ router.get('/api/session-status', (req: Request, res: Response) => {
  *   /import file-name=mikrotik-sync-TOKEN.rsc
  */
 router.get(`/mikrotik-sync-${config.syncToken}.rsc`, (req: Request, res: Response) => {
-  const recentVouchers = getRecentVouchers(config.dataRetentionDays);
-
-  // Filter: expired vouchers are REMOVED from MikroTik, active ones are ADDED.
-  // This prevents users from reconnecting with an expired voucher.
   let script = '';
+
+  // ── Pending disconnects (admin force-logout) ──
+  const pendingDisconnects = getPendingDisconnects();
+  for (const code of pendingDisconnects) {
+    const safeCode = escapeRsc(code);
+    script += `/ip hotspot user remove [find name="${safeCode}"]
+`;
+    script += `/ip hotspot active remove [find user="${safeCode}"]
+`;
+    removePendingDisconnect(code);
+  }
+
+  // ── Voucher sync (add new, remove expired) ──
+  const recentVouchers = getRecentVouchers(config.dataRetentionDays);
   for (const v of recentVouchers) {
     const code = escapeRsc(v.code);
 

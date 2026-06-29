@@ -45,6 +45,10 @@ exports.getSetting = getSetting;
 exports.setSetting = setSetting;
 exports.getAdminPassword = getAdminPassword;
 exports.changeAdminPassword = changeAdminPassword;
+exports.addPendingDisconnect = addPendingDisconnect;
+exports.getPendingDisconnects = getPendingDisconnects;
+exports.removePendingDisconnect = removePendingDisconnect;
+exports.clearPendingDisconnects = clearPendingDisconnects;
 /**
  * SQLite database layer for SHIMBA WiFi.
  * Uses sql.js — a pure-JavaScript SQLite implementation that requires NO native compilation.
@@ -357,6 +361,26 @@ function findActiveUser(code, mac, ip) {
 function logWebhookEvent(orderRef, rawBody, status) {
     run('INSERT INTO webhook_events (order_reference, raw_body, status, created_at) VALUES (?, ?, ?, ?)', [orderRef, rawBody, status, (0, utils_1.nowString)()]);
 }
+/* ── Pending Disconnects (for RSC-based MikroTik removal) ── */
+
+function addPendingDisconnect(code) {
+    run(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [`pending_disconnect_${code}`, code]);
+    utils_1.logger.info('DB', `Added pending disconnect for ${code}`);
+}
+
+function getPendingDisconnects() {
+    const rows = queryAll("SELECT key, value FROM settings WHERE key LIKE 'pending_disconnect_%'");
+    return rows.map(r => r.value).filter(Boolean);
+}
+
+function removePendingDisconnect(code) {
+    run('DELETE FROM settings WHERE key = ?', [`pending_disconnect_${code}`]);
+}
+
+function clearPendingDisconnects() {
+    run("DELETE FROM settings WHERE key LIKE 'pending_disconnect_%'");
+}
+
 /* ── Stats ── */
 function getStats() {
     const totalOrders = (queryOne('SELECT COUNT(*) as c FROM payment_orders')?.c) || 0;

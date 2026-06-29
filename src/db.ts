@@ -462,6 +462,33 @@ export function logWebhookEvent(orderRef: string, rawBody: string, status: strin
   );
 }
 
+/* ── Pending Disconnects (for RSC-based MikroTik removal) ── */
+
+/** Add a user code to the pending disconnect queue */
+export function addPendingDisconnect(code: string): void {
+  run(
+    `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [`pending_disconnect_${code}`, code]
+  );
+  logger.info('DB', `Added pending disconnect for ${code}`);
+}
+
+/** Get all pending disconnect codes */
+export function getPendingDisconnects(): string[] {
+  const rows = queryAll("SELECT key, value FROM settings WHERE key LIKE 'pending_disconnect_%'");
+  return rows.map(r => r.value).filter(Boolean);
+}
+
+/** Remove a pending disconnect (after it's been processed) */
+export function removePendingDisconnect(code: string): void {
+  run('DELETE FROM settings WHERE key = ?', [`pending_disconnect_${code}`]);
+}
+
+/** Clear all pending disconnects */
+export function clearPendingDisconnects(): void {
+  run("DELETE FROM settings WHERE key LIKE 'pending_disconnect_%'");
+}
+
 /* ── Stats ── */
 
 export function getStats(): {

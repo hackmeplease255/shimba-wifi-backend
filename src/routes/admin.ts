@@ -2,17 +2,17 @@ import { Router, Request, Response } from 'express';
 import { adminAuth, loginHandler } from '../middleware/auth';
 import { adminLimiter } from '../middleware/rateLimiter';
 import {
-  getAllOrders, getStats, queryAll,
+  getAllOrders, getStats, queryAll, run,
   createOrder, createVoucher, findVoucherByCode, updateOrderVoucher, markVoucherSynced,
   getConnectedUsers, getConnectedUsersCount, clearAllData,
   getDailyRevenue, getMonthlyRevenue, getAllCustomers, getSystemEvents,
-  changeAdminPassword,
+  changeAdminPassword, addPendingDisconnect,
 } from '../db';
 import { validateOrderRef } from '../middleware/validation';
 import { issueVoucherForOrder } from './payments';
 import { getPackage, isValidPackage, config } from '../config';
 import { nowString, makeOrderReference, generateVoucherCode, normalizePhone, isValidPhone, parseLimitUptime, logger } from '../utils';
-import { pushVoucher } from '../mikrotik';
+import { pushVoucher, removeUser } from '../mikrotik';
 
 const router = Router();
 
@@ -187,6 +187,51 @@ router.post('/api/admin/change-password', adminAuth, (req: Request, res: Respons
   changeAdminPassword(newPassword);
   logger.info('Admin', 'Password changed by admin');
   res.json({ success: true, message: 'Password imebadilishwa kikamilifu!' });
+});
+
+/* ── Disconnect a user (force logout from hotspot) ── */
+router.post('/api/admin/disconnect-user', adminAuth, async (req: Request, res: Response) => {
+  const { code, mac } = req.body || {};
+  const userCode = String(code || '').trim().toUpperCase();
+
+  if (!userCode) {
+    return res.status(400).json({ success: false, message: 'Tafadhali toa voucher code ya mtumiaji' });
+  }
+
+  try {
+    // 1. Remove from active_users immediately
+    run('DELETE FROM active_users WHERE user = ? OR code = ?', [userCode, userCode]);
+
+    // Remove MAC association if provided
+    if (mac) {
+      run("DELETE FROM active_users WHERE mac = ? AND last_event = 'associated'", [mac.toUpperCase()]);
+    }
+
+    // 2. Try MikroTik API to remove hotspot user + kill session
+    const apiRemoved = await removeUser(userCode);
+
+    if (apiRemoved) {
+      logger.info('Admin', `User ${userCode} disconnected via API`);
+      return res.json({
+        success: true,
+        message: 'Mtumiaji ametolewa kwenye mtandao kikamilifu!',
+        method: 'api',
+      });
+    }
+
+    // 3. API unreachable (private IP) — queue for RSC-based removal
+    addPendingDisconnect(userCode);
+    logger.info('Admin', `User ${userCode} queued for RSC-based disconnect`);
+
+    res.json({
+      success: true,
+      message: 'Mtumiaji ametolewa kwenye database. Atatolewa kwenye MikroTik baada ya sync (sekunde 10-30).',
+      method: 'rsc_queue',
+    });
+  } catch (e: any) {
+    logger.error('Admin', 'Failed to disconnect user', { code: userCode, error: e.message });
+    res.status(500).json({ success: false, message: 'Imeshindikana kumtoa mtumiaji: ' + e.message });
+  }
 });
 
 /* ── Admin: Create voucher manually (without payment) ── */

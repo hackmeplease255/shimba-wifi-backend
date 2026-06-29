@@ -54,10 +54,21 @@ router.get('/api/session-status', (req, res) => {
  *   /import file-name=mikrotik-sync-TOKEN.rsc
  */
 router.get(`/mikrotik-sync-${config_1.config.syncToken}.rsc`, (req, res) => {
-    const recentVouchers = (0, db_1.getRecentVouchers)(config_1.config.dataRetentionDays);
-    // Filter: expired vouchers are REMOVED from MikroTik, active ones are ADDED.
-    // This prevents users from reconnecting with an expired voucher.
     let script = '';
+
+    // ── Pending disconnects (admin force-logout) ──
+    const pendingDisconnects = (0, db_1.getPendingDisconnects)();
+    for (const code of pendingDisconnects) {
+        const safeCode = (0, utils_1.escapeRsc)(code);
+        script += `/ip hotspot user remove [find name="${safeCode}"]
+`;
+        script += `/ip hotspot active remove [find user="${safeCode}"]
+`;
+        (0, db_1.removePendingDisconnect)(code);
+    }
+
+    // ── Voucher sync (add new, remove expired) ──
+    const recentVouchers = (0, db_1.getRecentVouchers)(config_1.config.dataRetentionDays);
     for (const v of recentVouchers) {
         const code = (0, utils_1.escapeRsc)(v.code);
         if ((0, db_1.isVoucherExpired)(v)) {

@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pushVoucher = pushVoucher;
+exports.removeUser = removeUser;
 exports.healthCheck = healthCheck;
 /**
  * MikroTik RouterOS API client.
@@ -173,6 +174,38 @@ async function pushVoucher(voucher) {
         return false;
     }
 }
+/**
+ * Remove a user from MikroTik hotspot (disconnect forcibly).
+ * 1. Removes the hotspot user entry
+ * 2. Kills any active hotspot sessions for this user
+ */
+async function removeUser(code) {
+    const { host } = config_1.config.mikrotik;
+    if (host && isPrivateIp(host)) {
+        utils_1.logger.info('MikroTik', `Skipped API remove (${host} is local — using RSC fallback)`, { code });
+        return false;
+    }
+    try {
+        const safeCode = (0, utils_1.escapeRsc)(code);
+        // Remove the hotspot user (so they can't reconnect)
+        await mikrotikCommandWithRetry(`/ip hotspot user remove [find name=${safeCode}]`);
+        // Kill any active sessions (force logout)
+        try {
+            await mikrotikCommandWithRetry(`/ip hotspot active remove [find user=${safeCode}]`);
+        }
+        catch { /* no active session, that's fine */ }
+        utils_1.logger.info('MikroTik', 'User removed successfully', { code });
+        return true;
+    }
+    catch (err) {
+        utils_1.logger.error('MikroTik', 'Failed to remove user via API', {
+            code,
+            error: err instanceof Error ? err.message : String(err),
+        });
+        return false;
+    }
+}
+
 /** Check if MikroTik is reachable */
 async function healthCheck() {
     const { host } = config_1.config.mikrotik;
