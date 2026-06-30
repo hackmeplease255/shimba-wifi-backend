@@ -99,8 +99,9 @@ async function main() {
     }, 24 * 60 * 60 * 1000);
     // Run cleanup once on startup
     (0, db_1.cleanupOldData)(config_1.config.dataRetentionDays);
-
     /* 6. Auto-expire voucher sessions every 30 seconds */
+    // When a voucher's limit-uptime expires, the user should be
+    // automatically removed from active_users and the hotspot.
     setInterval(() => {
         try {
             (0, db_1.cleanupExpiredActiveUsers)();
@@ -109,8 +110,7 @@ async function main() {
             utils_1.logger.error('Session', 'Expiry cleanup error', { error: err instanceof Error ? err.message : String(err) });
         }
     }, 30_000);
-
-    // Run once on startup
+    // Run once on startup to catch any sessions that expired during downtime
     setTimeout(() => {
         try {
             (0, db_1.cleanupExpiredActiveUsers)();

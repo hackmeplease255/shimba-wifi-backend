@@ -9,7 +9,6 @@ const payments_1 = require("./payments");
 const config_1 = require("../config");
 const utils_1 = require("../utils");
 const mikrotik_1 = require("../mikrotik");
-const { removeUser } = mikrotik_1;
 const router = (0, express_1.Router)();
 /* ── Admin login (get JWT token) ── */
 router.post('/api/admin/login', rateLimiter_1.adminLimiter, auth_1.loginHandler);
@@ -54,7 +53,6 @@ router.get('/api/admin/vouchers', auth_1.adminAuth, (req, res) => {
     const vouchers = (0, db_1.queryAll)('SELECT * FROM vouchers ORDER BY id DESC LIMIT ?', [limit]);
     res.json({ success: true, vouchers });
 });
-
 /* ── Connected users (real-time, enriched with voucher data) ── */
 router.get('/api/admin/connected-users', auth_1.adminAuth, (_req, res) => {
     const users = (0, db_1.getConnectedUsers)();
@@ -83,8 +81,8 @@ router.get('/api/admin/connected-users', auth_1.adminAuth, (_req, res) => {
             code: u.code,
             mac: u.mac,
             ip: u.ip,
-            package_name: u.package_name,
-            login_at: u.login_at,
+            package_name: u.package_name || '',
+            login_at: u.login_at || '',
             phone: (voucher?.phone && voucher.phone !== 'ADMIN_CASH') ? voucher.phone : '',
             amount: voucher?.amount || 0,
             voucher_status: voucher?.status || '',
@@ -97,7 +95,6 @@ router.get('/api/admin/connected-users', auth_1.adminAuth, (_req, res) => {
     });
     res.json({ success: true, users: enriched, totalUnique: count });
 });
-
 /* ── Clear all data (reset for new client) ── */
 router.post('/api/admin/clear-data', auth_1.adminAuth, (req, res) => {
     const { confirm } = req.body || {};
@@ -111,34 +108,29 @@ router.post('/api/admin/clear-data', auth_1.adminAuth, (req, res) => {
     utils_1.logger.info('Admin', 'All data cleared by admin');
     res.json({ success: true, message: 'Data zote zimefutwa kikamilifu!' });
 });
-
 /* ── Daily revenue (for charts) ── */
 router.get('/api/admin/daily-revenue', auth_1.adminAuth, (req, res) => {
     const days = Math.min(Number(req.query.days) || 14, 90);
     const revenue = (0, db_1.getDailyRevenue)(days);
     res.json({ success: true, revenue });
 });
-
 /* ── Monthly revenue (for charts) ── */
 router.get('/api/admin/monthly-revenue', auth_1.adminAuth, (req, res) => {
     const months = Math.min(Number(req.query.months) || 12, 36);
     const revenue = (0, db_1.getMonthlyRevenue)(months);
     res.json({ success: true, revenue });
 });
-
 /* ── Customers list ── */
 router.get('/api/admin/customers', auth_1.adminAuth, (_req, res) => {
     const customers = (0, db_1.getAllCustomers)();
     res.json({ success: true, customers });
 });
-
 /* ── System events / logs ── */
 router.get('/api/admin/system-events', auth_1.adminAuth, (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const events = (0, db_1.getSystemEvents)(limit);
     res.json({ success: true, events });
 });
-
 /* ── System health (admin version) ── */
 router.get('/api/admin/system-info', auth_1.adminAuth, (_req, res) => {
     res.json({
@@ -151,7 +143,6 @@ router.get('/api/admin/system-info', auth_1.adminAuth, (_req, res) => {
         timestamp: new Date().toISOString(),
     });
 });
-
 /* ── Change admin password ── */
 router.post('/api/admin/change-password', auth_1.adminAuth, (req, res) => {
     const { currentPassword, newPassword } = req.body || {};
@@ -172,7 +163,6 @@ router.post('/api/admin/change-password', auth_1.adminAuth, (req, res) => {
     utils_1.logger.info('Admin', 'Password changed by admin');
     res.json({ success: true, message: 'Password imebadilishwa kikamilifu!' });
 });
-
 /* ── Bandwidth usage stats (daily, weekly, monthly) ── */
 router.get('/api/admin/usage', auth_1.adminAuth, (req, res) => {
     const view = String(req.query.view || 'daily');
@@ -190,7 +180,6 @@ router.get('/api/admin/usage', auth_1.adminAuth, (req, res) => {
     const total = (0, db_1.getTotalUsage)();
     res.json({ success: true, usage: data, total });
 });
-
 /* ── Disconnect a user (force logout from hotspot) ── */
 router.post('/api/admin/disconnect-user', auth_1.adminAuth, async (req, res) => {
     const { code, mac } = req.body || {};
@@ -229,7 +218,6 @@ router.post('/api/admin/disconnect-user', auth_1.adminAuth, async (req, res) => 
         res.status(500).json({ success: false, message: 'Imeshindikana kumtoa mtumiaji: ' + e.message });
     }
 });
-
 /* ── Admin: Create voucher manually (without payment) ── */
 router.post('/api/admin/create-voucher', auth_1.adminAuth, async (req, res) => {
     const { phone, package_name } = req.body || {};

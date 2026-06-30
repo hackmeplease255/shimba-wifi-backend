@@ -3,11 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const config_1 = require("../config");
 const db_1 = require("../db");
-const { reportActiveSessions } = db_1;
 const utils_1 = require("../utils");
 const mikrotik_1 = require("../mikrotik");
 const router = (0, express_1.Router)();
-const COOKIE_SCRIPT = `(function(){var u="$(username)";var m="$(mac)";var i="$(ip)";if(u&&u!==""&&u!==" "){document.cookie="shimba_voucher="+encodeURIComponent(u)+";path=/;max-age=604800";var x=new XMLHttpRequest();x.open('GET','https://shimbawifi.xyz/api/hotspot-callback?user='+encodeURIComponent(u)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i),true);x.send()}})();`
 /* ── Hotspot login callback (called by MikroTik) ── */
 router.get('/api/hotspot-login', (req, res) => {
     if (req.query.token !== config_1.config.syncToken) {
@@ -55,7 +53,6 @@ router.get('/api/session-status', (req, res) => {
  */
 router.get(`/mikrotik-sync-${config_1.config.syncToken}.rsc`, (req, res) => {
     let script = '';
-
     // ── Pending disconnects (admin force-logout) ──
     const pendingDisconnects = (0, db_1.getPendingDisconnects)();
     for (const code of pendingDisconnects) {
@@ -66,7 +63,6 @@ router.get(`/mikrotik-sync-${config_1.config.syncToken}.rsc`, (req, res) => {
 `;
         (0, db_1.removePendingDisconnect)(code);
     }
-
     // ── Voucher sync (add new, remove expired) ──
     const recentVouchers = (0, db_1.getRecentVouchers)(config_1.config.dataRetentionDays);
     for (const v of recentVouchers) {
@@ -78,6 +74,7 @@ router.get(`/mikrotik-sync-${config_1.config.syncToken}.rsc`, (req, res) => {
             script += `/ip hotspot user remove [find name="${code}"]
 `;
             (0, db_1.markVoucherExpired)(v.code);
+            // Note: MAC association cleanup is handled by auto-connect endpoint
             utils_1.logger.info('MikroTik', 'Expired voucher removed from sync script', { code: v.code });
         }
         else {
@@ -101,6 +98,74 @@ router.get('/api/mark-synced-get', (req, res) => {
         utils_1.logger.info('MikroTik', 'Voucher marked synced via GET callback', { code });
     }
     res.type('text/plain').send('ok');
+});
+/* ── Check MAC: find active voucher by MAC address (cross-router roaming) ──
+ *
+ * Called by the alogin.html JavaScript when a user connects to any SHIMBA WiFi
+ * router. If the MAC is associated with a valid (non-expired) voucher,
+ * returns the voucher code so the page can auto-login without payment.
+ *
+ * This is the KEY endpoint that enables roaming between routers:
+ *   User pays on Router A → MAC is saved
+ *   User walks to Router B → alogin.html calls check-mac → finds voucher → auto-login
+ *   No second payment needed!
+ *
+ * Query params:
+ *   mac (required): MAC address of the connecting device
+ *
+ * Returns:
+ *   { success: true, has_voucher: true, code: "ABC123", package_name: "24 Hours",
+ *     remaining_ms: 12345000, remaining_label: "3h 25m" }
+ *   or { success: true, has_voucher: false }
+ */
+router.get('/api/check-mac', (req, res) => {
+    const mac = String(req.query.mac || '').trim().toUpperCase();
+    if (!mac) {
+        return res.json({ success: true, has_voucher: false, reason: 'missing_mac' });
+    }
+    // Check if this MAC has an associated voucher
+    const association = (0, db_1.findMacAssociation)(mac);
+    if (!association) {
+        utils_1.logger.info('Hotspot', 'Check-MAC: no voucher found for MAC', { mac, reason: 'no_association' });
+        return res.json({ success: true, has_voucher: false, reason: 'no_association' });
+    }
+    // Verify the voucher still exists and is valid
+    const voucher = (0, db_1.findVoucherByCode)(association.code);
+    if (!voucher) {
+        utils_1.logger.info('Hotspot', 'Check-MAC: associated voucher not found in DB', { mac, code: association.code, reason: 'voucher_not_found' });
+        return res.json({ success: true, has_voucher: false, reason: 'voucher_not_found' });
+    }
+    // Check if voucher has expired
+    if ((0, db_1.isVoucherExpired)(voucher)) {
+        (0, db_1.markVoucherExpired)(association.code);
+        (0, db_1.deleteMacAssociation)(mac);
+        utils_1.logger.info('Hotspot', 'Check-MAC: voucher expired, removed association', { mac, code: association.code, reason: 'expired' });
+        return res.json({ success: true, has_voucher: false, reason: 'expired', message: 'Vocha yako muda wake umekwisha. Tafadhali nunua mpya.' });
+    }
+    // Calculate remaining time
+    let remainingMs = 0;
+    let remainingLabel = '';
+    const maxMs = (0, utils_1.parseLimitUptime)(voucher.limit_uptime);
+    if (maxMs > 0) {
+        const elapsed = Date.now() - new Date(voucher.created_at).getTime();
+        remainingMs = Math.max(0, maxMs - elapsed);
+        const mins = Math.floor(remainingMs / 60000);
+        if (mins >= 1440)
+            remainingLabel = `${Math.floor(mins / 1440)}d ${Math.floor((mins % 1440) / 60)}h`;
+        else if (mins >= 60)
+            remainingLabel = `${Math.floor(mins / 60)}h ${mins % 60}m`;
+        else
+            remainingLabel = `${mins}m`;
+    }
+    utils_1.logger.info('Hotspot', 'Check-MAC: found active voucher for roaming', { mac, code: association.code, remaining: remainingLabel });
+    res.json({
+        success: true,
+        has_voucher: true,
+        code: association.code,
+        package_name: association.package_name,
+        remaining_ms: remainingMs,
+        remaining_label: remainingLabel,
+    });
 });
 /* ── Connect WiFi page ──
  *
@@ -198,8 +263,8 @@ router.get('/api/connect', (req, res) => {
   <div id="status-retrying" class="hidden">
     <div class="spinner" style="display:inline-block;width:24px;height:24px;border:3px solid #1f2a44;border-top-color:#22d3ee;border-radius:50%;animation:spin 0.8s linear infinite;margin:1rem auto;"></div>
     <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
-    <p style="color:#fbbf24;font-weight:600;">Inajaribu tena kuunganisha...</p>
-    <p class="info">Vocha yako inaandaliwa kwenye router. Subiri sekunde chache...</p>
+    <p style="color:#fbbf24;font-weight:600;">Inasynchroniza vocha kwenye router...</p>
+    <p class="info">Vocha yako inawekwa kwenye router. Hii inachukua sekunde chache tu.</p>
   </div>
 
   <form id="loginForm" method="post" action="http://192.168.88.1/login" target="_self">
@@ -275,8 +340,7 @@ router.get('/api/auto-connect', (req, res) => {
     }
     res.json({ auto: false });
 });
-
-/* ── Associate a MAC address (GET — for alogin.html fallback) ── */
+/* ── Associate a MAC address with a voucher code (GET — for alogin.html fallback) ── */
 router.get('/api/associate-mac', (req, res) => {
     const mac = String(req.query.mac || '').trim().toUpperCase();
     const code = String(req.query.code || '').trim().toUpperCase();
@@ -293,8 +357,7 @@ router.get('/api/associate-mac', (req, res) => {
     utils_1.logger.info('Hotspot', 'MAC associated via GET (for alogin fallback)', { mac, code: voucher.code, ip });
     res.json({ success: true });
 });
-
-/* ── Associate a MAC address (POST — for portal) ── */
+/* ── Associate a MAC address with a voucher code (POST — for portal) ── */
 router.post('/api/associate-mac', (req, res) => {
     const { mac, code, ip } = req.body || {};
     if (!mac || !code) {
@@ -306,13 +369,22 @@ router.post('/api/associate-mac', (req, res) => {
     }
     const normalizedMac = String(mac).trim().toUpperCase();
     const clientIp = String(ip || '').trim();
+    // Save MAC→voucher association (for auto-connect on return)
     (0, db_1.saveMacAssociation)(normalizedMac, voucher.code, voucher.package_name);
+    // Also record the login in active_users so the admin panel sees it
     (0, db_1.upsertActiveUser)(voucher.code, voucher.code, normalizedMac, clientIp, voucher.package_name);
     utils_1.logger.info('Hotspot', 'MAC associated with voucher + user logged in', { mac: normalizedMac, code: voucher.code, ip: clientIp });
     res.json({ success: true });
 });
-
-/* ── Hotspot callback from status/alogin pages (no token needed) */
+/* ── Hotspot callback from status/alogin pages (no token needed) ──
+ *
+ * Called by JavaScript in hotspot/status.html and hotspot/alogin.html
+ * AFTER the user has successfully logged in through MikroTik.
+ * At this point the user has full internet access (block bypassed).
+ *
+ * If MAC is empty (some MikroTik versions), tries to get it from
+ * an existing MAC association for this voucher code.
+ */
 router.get('/api/hotspot-callback', (req, res) => {
     const user = String(req.query.user || '').trim().toUpperCase();
     let mac = String(req.query.mac || '').trim().toUpperCase();
@@ -332,8 +404,24 @@ router.get('/api/hotspot-callback', (req, res) => {
     utils_1.logger.info('Hotspot', 'User logged in (callback from hotspot page)', { user, mac, ip });
     res.type('text/plain').send('ok');
 });
-
-/* ── Auto-login: prepare voucher for MikroTik + authenticate ── */
+/* ── Auto-login: prepare voucher for MikroTik + authenticate ──
+ *
+ * Called by the frontend BEFORE redirecting to MikroTik login.
+ * This ensures:
+ *   1. The voucher exists in MikroTik hotspot users (push if not synced)
+ *   2. The MAC association is saved (for future auto-reconnect)
+ *   3. The login is recorded in active_users
+ *   4. Returns the MikroTik login URL for redirect
+ *
+ * This is the KEY endpoint for making auto-reconnect seamless:
+ *   - BEFORE redirect: call this to push voucher to MikroTik
+ *   - AFTER login: status.html calls hotspot-callback
+ *
+ * Query params:
+ *   code (required): voucher code
+ *   mac  (optional): device MAC address
+ *   ip   (optional): device IP address
+ */
 router.get('/api/auto-login', async (req, res) => {
     const code = String(req.query.code || '').trim().toUpperCase();
     const mac = String(req.query.mac || '').trim().toUpperCase();
@@ -367,7 +455,7 @@ router.get('/api/auto-login', async (req, res) => {
             }
         }
         catch (err) {
-            utils_1.logger.warn('Hotspot', 'Auto-login: Failed to push voucher', { code, error: String(err) });
+            utils_1.logger.warn('Hotspot', 'Auto-login: Failed to push voucher (will try .rsc)', { code, error: String(err) });
         }
     }
     // 4. Save MAC association (for future auto-reconnect lookups)
@@ -388,8 +476,18 @@ router.get('/api/auto-login', async (req, res) => {
         message: 'Vocha ni halali! Unaelekezwa kwenye WiFi...',
     });
 });
-
-/* ── Serve MikroTik hotspot files ── */
+/* ── Serve MikroTik hotspot files ──
+ *
+ * These HTML files are served from the backend so the user can download
+ * them to MikroTik using:
+ *   /tool fetch url="https://shimbawifi.xyz/mt-files/status.html"
+ *   /tool fetch url="https://shimbawifi.xyz/mt-files/alogin.html"
+ *   /tool fetch url="https://shimbawifi.xyz/mt-files/login.html"
+ *
+ * The status.html and alogin.html include JavaScript that calls
+ * /api/hotspot-callback AFTER the user authenticates (when internet
+ * is available), recording the login in active_users.
+ */
 const HOTSPOT_FILES = {
     'status.html': `<!DOCTYPE html>
 <html>
@@ -424,33 +522,77 @@ $(endif)
 <div class="row"><span class="lbl">IP Address</span><span class="val">$(ip)</span></div>
 <div class="row"><span class="lbl">Bytes In/Out</span><span class="val">$(bytes-in-nice) / $(bytes-out-nice)</span></div>
 </div>
-<a href="$(link-logout)" class="btn btno">\u2716 Ondoka (Logout)</a>
-<div class="ft">SHIMBA WiFi &bull; Furahia internet ya kasi!</div>
+<a href="$(link-logout)" class="btn btno" style="margin-top:16px">\u2716 Ondoka (Logout)</a>
+<div class="ft">SHIMBA WiFi</div>
 </div>
 <script>
-${COOKIE_SCRIPT}
-setTimeout(function(){window.location.href="https://google.com"},3000);
+(function(){
+var u="$(username)";var m="$(mac)";var i="$(ip)";
+if(u&&u!==""&&u!==" "){
+// Save voucher in cookie for auto-reconnect
+document.cookie="shimba_voucher="+encodeURIComponent(u)+";path=/;max-age=604800";
+var x=new XMLHttpRequest();x.open('GET','https://shimbawifi.xyz/api/hotspot-callback?user='+encodeURIComponent(u)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i),true);x.send()
+}
+// Auto-redirect to Google after 3 seconds
+setTimeout(function(){window.location.href='https://google.com'},3000);
+})();
 </script>
 </body></html>`,
     'alogin.html': `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SHIMBA WIFI — Redirect</title>
-<meta http-equiv="refresh" content="0;url=https://shimba-wifi-hub.vercel.app/?mac=$(mac)&ip=$(ip)&link-status=$(link-status)">
+<title>SHIMBA WIFI — Inatafuta...</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:linear-gradient(180deg,#070b14,#0b1220);color:#eaf2ff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:20px;font-size:14px}
 .sp{width:28px;height:28px;border:3px solid #1f2a44;border-top-color:#22d3ee;border-radius:50%;animation:spin .8s linear infinite;margin:12px auto}
 @keyframes spin{to{transform:rotate(360deg)}}
+.st{color:#22d3ee;font-weight:600}
+.sub{color:#8aa0c4;font-size:12px;margin-top:6px}
 </style></head>
 <body><div>
-<p>Inaelekeza kwenye lango la huduma...</p>
+<p class="st">\uD83D\uDEF1 Inatafuta vocha yako kwenye mtandao wa SHIMBA WiFi...</p>
 <div class="sp"></div>
+<p class="sub">Ikiwa umekwisha nunua vocha, utaunganishwa moja kwa moja.</p>
 </div>
 <script>
-${COOKIE_SCRIPT}
-location.href="https://shimba-wifi-hub.vercel.app/?mac="+encodeURIComponent(m)+"&ip="+encodeURIComponent(i)+"&link-status=$(link-status)";
+(function(){
+var m="$(mac-address)";var u="$(username)";var i="$(address)";var BASE='https://shimbawifi.xyz';
+
+// If user already has a voucher code from cookie, go straight to login
+function getCookie(n){var c=document.cookie.match(new RegExp('(^| )'+n+'=([^;]+)'));return c?decodeURIComponent(c[2]):null}
+var saved=getCookie('shimba_voucher');
+if(saved&&saved!==''&&(!u||u===''||u===' ')){
+  // Redirect to connect page which auto-submits login
+  location.href=BASE+'/api/connect?code='+encodeURIComponent(saved)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i);
+}
+else if(m&&m!==''&&m!=='00:00:00:00:00:00'){
+  // Check if this MAC has an active voucher on any router
+  var x=new XMLHttpRequest();
+  x.open('GET',BASE+'/api/check-mac?mac='+encodeURIComponent(m),true);
+  x.onload=function(){
+    try{
+      var r=JSON.parse(x.responseText);
+      if(r&&r.has_voucher&&r.code){
+        // Active voucher found! Redirect to connect page (auto-submits login)
+        location.href=BASE+'/api/connect?code='+encodeURIComponent(r.code)+'&mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i);
+        return;
+      }
+    }catch(e){}
+    // No active voucher — redirect to payment portal
+    location.href='https://shimba-wifi-hub.vercel.app/?mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i)+'&link-status=$(link-status)';
+  };
+  x.onerror=function(){
+    // Backend unreachable (no internet yet) — fallback to portal
+    location.href='https://shimba-wifi-hub.vercel.app/?mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i)+'&link-status=$(link-status)';
+  };
+  x.send();
+} else {
+  // No MAC — redirect to portal directly
+  location.href='https://shimba-wifi-hub.vercel.app/?mac='+encodeURIComponent(m)+'&ip='+encodeURIComponent(i)+'&link-status=$(link-status)';
+}
+})();
 </script>
 </body></html>`,
     'login.html': `<!DOCTYPE html>
@@ -470,6 +612,7 @@ h1{font-size:22px;font-weight:900;margin-bottom:4px;background:linear-gradient(1
 .btn{width:100%;padding:14px;border-radius:14px;border:none;background:linear-gradient(135deg,#22d3ee,#3b82f6);color:#001018;font-size:15px;font-weight:800;cursor:pointer;margin-top:4px}
 .btn:active{transform:translateY(1px)}
 .err{color:#fca5a5;font-size:13px;margin-top:10px;background:rgba(239,68,68,0.1);padding:8px 12px;border-radius:8px;border:1px solid rgba(239,68,68,0.2)}
+.st{font-size:12px;color:#22d3ee;margin-top:8px;display:none}
 .ft{font-size:11px;color:#4a5f80;margin-top:20px}
 a{color:#22d3ee;text-decoration:none}
 </style></head>
@@ -490,25 +633,56 @@ $(endif)
 <button class="btn" type="submit">\uD83D\uDEE1 Ingia kwenye WiFi</button>
 </form>
 
+<p class="st" id="statusMsg">\uD83D\uDEF1 Inatafuta vocha yako kwenye mtandao mzima wa SHIMBA...</p>
+
 <p class="p" style="margin-top:16px">Huna voucher? <a href="https://shimba-wifi-hub.vercel.app" target="_blank">Nunua hapa \u2197</a></p>
-<div class="ft">SHIMBA WiFi</div>
+<div class="ft">SHIMBA WiFi &bull; Furahia internet ya kasi!</div>
 </div>
 <script>
 (function(){
-function getCookie(n){var m=document.cookie.match(new RegExp('(^| )'+n+'=([^;]+)'));return m?decodeURIComponent(m[2]):null}
+var form=document.getElementById('loginForm');
+var u=document.getElementById('username');
+var p=document.getElementById('password');
+var sm=document.getElementById('statusMsg');
+
+// Auto-fill from cookie (existing behavior)
+function getCookie(n){var c=document.cookie.match(new RegExp('(^| )'+n+'=([^;]+)'));return c?decodeURIComponent(c[2]):null}
 var saved=getCookie('shimba_voucher');
-if(saved&&!document.getElementById('username').value){
-document.getElementById('username').value=saved;
-document.getElementById('password').value=saved;
-setTimeout(function(){document.getElementById('loginForm').submit()},100)
+
+// If form is pre-filled (from alogin redirect flow), auto-submit
+if(u.value&&u.value!==''&&u.value!==' '){
+  p.value=u.value;
+  sm.style.display='block';
+  setTimeout(function(){form.submit()},500);
+}
+// If saved cookie exists and form is empty, fill and auto-submit
+else if(saved&&saved!==''){
+  u.value=saved;
+  p.value=saved;
+  sm.style.display='block';
+  setTimeout(function(){form.submit()},300);
 }
 })();
 </script>
 </body>
 </html>`,
 };
-
-/* ── Capture a single active hotspot session (called by MikroTik hotspot-actives.rsc) ── */
+/* ── Fix on-login callback URL (RSC script for MikroTik) ──
+ *
+ * Serves a .rsc script that fixes the on-login callback URL on all
+ * hotspot user profiles. The ? character gets eaten by MikroTik terminal
+ * (it's the help key), so this file is downloaded and imported instead.
+ *
+ * Usage on MikroTik:
+ *   /tool fetch url="https://shimbawifi.xyz/api/fix-onlogin.rsc"
+ *   /import fix-onlogin.rsc
+ */
+/* ── Capture a single active hotspot session (called by MikroTik hotspot-actives.rsc) ──
+ *
+ * MikroTik scheduler runs every 30 seconds, fetches /api/hotspot-actives.rsc,
+ * and that RSC script loops through active sessions calling this endpoint.
+ * No `?` in URL to avoid MikroTik help-key eating the query string.
+ */
 router.get('/api/capture-active/:user/:mac/:ip/:bytesIn?/:bytesOut?', (req, res) => {
     const user = String(req.params.user || '').trim().toUpperCase();
     const mac = String(req.params.mac || '').trim().toUpperCase();
@@ -521,21 +695,30 @@ router.get('/api/capture-active/:user/:mac/:ip/:bytesIn?/:bytesOut?', (req, res)
     }
     res.type('text/plain').send('ok');
 });
-
 /* ── Bulk report active sessions (POST, alternative to capture-active) ── */
 router.post('/api/report-active-bulk', (req, res) => {
     const { sessions } = req.body || {};
     if (!Array.isArray(sessions)) {
         return res.json({ success: false, count: 0 });
     }
-    const count = reportActiveSessions(sessions);
+    const count = (0, db_1.reportActiveSessions)(sessions);
     utils_1.logger.info('Hotspot', 'Bulk active session report', { count });
     res.json({ success: true, count });
 });
-
-/* ── Hotspot active reporter setup (RSC script for MikroTik) ── */
+/* ── Hotspot active reporter setup (RSC script for MikroTik) ──
+ *
+ * Download and import ONCE on MikroTik. This:
+ *   1. Creates a scheduler (shimba-active) that runs every 30 seconds
+ *   2. Fetches /api/hotspot-actives.rsc which reports active sessions
+ *
+ * Usage:
+ *   /tool fetch url="https://shimbawifi.xyz/api/hotspot-active-report.rsc"
+ *   /import hotspot-active-report.rsc
+ */
 router.get('/api/hotspot-active-report.rsc', (req, res) => {
     const baseUrl = config_1.config.publicBaseUrl;
+    // CRITICAL: on-event must BOTH fetch AND import the RSC!
+    // Fetch alone just downloads the file — it never executes.
     const schedulerEvent = `/tool fetch url="${baseUrl}/api/hotspot-actives.rsc"; :delay 3s; /import hotspot-actives.rsc`;
     const escapedEvent = (0, utils_1.escapeRsc)(schedulerEvent);
     let script = `# SHIMBA WIFI — Hotspot Active Session Reporter
@@ -557,10 +740,17 @@ router.get('/api/hotspot-active-report.rsc', (req, res) => {
 `;
     res.type('text/plain').send(script);
 });
-
-/* ── Report active hotspot sessions (RSC script for MikroTik scheduler) ── */
+/* ── Report active hotspot sessions (RSC script for MikroTik scheduler) ──
+ *
+ * Called by the shimba-active scheduler every 30 seconds.
+ * Iterates all active hotspot sessions and reports each one
+ * to the backend via capture-active endpoint (no ? in URL).
+ */
 router.get('/api/hotspot-actives.rsc', (req, res) => {
     const baseUrl = config_1.config.publicBaseUrl;
+    // IMPORTANT: $i, $u, $m, $a must NOT be escaped — they are MikroTik variables
+    // that RouterOS expands at runtime. In JS template literals, $x is safe
+    // (only ${...} interpolates), so bare $i, $u, etc. output as-is.
     let script = `# SHIMBA WIFI — Report active hotspot sessions
 # Generated by backend — called by shimba-active scheduler
 
@@ -575,8 +765,84 @@ router.get('/api/hotspot-actives.rsc', (req, res) => {
 `;
     res.type('text/plain').send(script);
 });
+/* ── Router setup RSC script (ONE-TIME setup for each new MikroTik router) ──
+ *
+ * Download and import ONCE on each new MikroTik router. This configures:
+ *   1. Walled garden to allow traffic to backend before authentication
+ *   2. Scheduler to sync vouchers every 30 seconds
+ *   3. Scheduler to report active sessions every 30 seconds
+ *   4. Fix on-login callback URL on hotspot profiles
+ *
+ * Usage on each new router:
+ *   /tool fetch url="https://shimbawifi.xyz/api/router-setup.rsc"
+ *   /import router-setup.rsc
+ *
+ * Or specify a router name:
+ *   /tool fetch url="https://shimbawifi.xyz/api/router-setup.rsc?name=router-a"
+ *   /import router-setup.rsc
+ */
+router.get('/api/router-setup.rsc', (req, res) => {
+    const baseUrl = config_1.config.publicBaseUrl;
+    const routerName = (0, utils_1.escapeRsc)(String(req.query.name || 'default').trim());
+    const syncToken = config_1.config.syncToken;
+    // On-login callback URL (MikroTik variables get expanded at runtime)
+    const callbackUrl = `${baseUrl}/api/hotspot-callback?user=$user&mac=$mac-address&ip=$address`;
+    // Sync scheduler: fetches voucher list and imports
+    const syncEvent = `/tool fetch url="${baseUrl}/mikrotik-sync-${syncToken}.rsc"; :delay 3s; /import mikrotik-sync-${syncToken}.rsc`;
+    const escapedSync = (0, utils_1.escapeRsc)(syncEvent);
+    // Active reporter scheduler event
+    const activeEvent = `/tool fetch url="${baseUrl}/api/hotspot-actives.rsc"; :delay 3s; /import hotspot-actives.rsc`;
+    const escapedActive = (0, utils_1.escapeRsc)(activeEvent);
+    let script = `# SHIMBA WIFI — Complete Router Setup
+# ===============================================
+# Router: ${routerName}
+# Generated: ${new Date().toISOString()}
+#
+# Download and import ONCE on this MikroTik:
+#   /tool fetch url="${baseUrl}/api/router-setup.rsc"
+#   /import router-setup.rsc
+#
+# This configures everything needed for SHIMBA WiFi:
+#   - Walled garden (access backend without auth)
+#   - Voucher sync scheduler (every 30s)
+#   - Active session reporter (every 30s)
+#   - On-login callback on hotspot profiles
+# ===============================================
 
-/* ── Fix on-login callback URL (RSC script for MikroTik) ── */
+# ── 1. Walled Garden (allow backend traffic before hotspot auth) ──
+# Allow access to SHIMBA backend before hotspot authentication
+/ip hotspot walled-garden add dst-host=${baseUrl.replace(/^https?:\/\//, '').split('/')[0]} comment=shimba-backend
+
+# ── 2. Voucher Sync Scheduler ──
+:if ([/system scheduler find name="shimba-sync"] = "") do={
+  /system scheduler add name="shimba-sync" interval=30s on-event="${escapedSync}" start-time=startup
+}
+
+# ── 3. Active Session Reporter ──
+:if ([/system scheduler find name="shimba-active"] = "") do={
+  /system scheduler add name="shimba-active" interval=30s on-event="${escapedActive}" start-time=startup
+}
+
+# ── 4. Fix On-Login Callback on Hotspot Profiles ──
+`;
+    // Add profile-specific on-login callbacks
+    const profiles = ['6hours-500', '24hours-1000', '48hours-2000', '7days-5000'];
+    for (const profile of profiles) {
+        const escapedProfile = (0, utils_1.escapeRsc)(profile);
+        const onLoginValue = `:global url "${callbackUrl}"; /tool fetch url=$url`;
+        const escapedOnLogin = (0, utils_1.escapeRsc)(onLoginValue);
+        script += `/ip hotspot user profile set [find name="${escapedProfile}"] on-login="${escapedOnLogin}"
+`;
+    }
+    // ── 5. Initial sync — run once now ──
+    script += `
+# ── 5. Initial sync ──
+/tool fetch url="${baseUrl}/mikrotik-sync-${syncToken}.rsc"
+:delay 3s
+/import mikrotik-sync-${syncToken}.rsc
+`;
+    res.type('text/plain').send(script);
+});
 router.get('/api/fix-onlogin.rsc', (req, res) => {
     const profiles = ['6hours-500', '24hours-1000', '48hours-2000', '7days-5000'];
     const callbackUrl = 'https://shimbawifi.xyz/api/hotspot-callback?user=$user&mac=$mac-address&ip=$address';
@@ -588,6 +854,8 @@ router.get('/api/fix-onlogin.rsc', (req, res) => {
 `;
     for (const profile of profiles) {
         const escapedProfile = (0, utils_1.escapeRsc)(profile);
+        // Build the on-login value: we need proper RSC escaping
+        // The value is: :global url "CALLBACK_URL"; /tool fetch url=$url
         const onLoginValue = `:global url "${callbackUrl}"; /tool fetch url=$url`;
         const escapedOnLogin = (0, utils_1.escapeRsc)(onLoginValue);
         script += `/ip hotspot user profile set [find name="${escapedProfile}"] on-login="${escapedOnLogin}"
@@ -595,7 +863,6 @@ router.get('/api/fix-onlogin.rsc', (req, res) => {
     }
     res.type('text/plain').send(script);
 });
-
 router.get('/mt-files/:file', (req, res) => {
     const file = String(req.params.file || '');
     // Basic sanitize: only allow known hotspot files

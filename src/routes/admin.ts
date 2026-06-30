@@ -6,7 +6,7 @@ import {
   createOrder, createVoucher, findVoucherByCode, updateOrderVoucher, markVoucherSynced,
   getConnectedUsers, getConnectedUsersCount, clearAllData,
   getDailyRevenue, getMonthlyRevenue, getAllCustomers, getSystemEvents,
-  changeAdminPassword, addPendingDisconnect,
+  getAdminPassword, changeAdminPassword, addPendingDisconnect,
   getUsageByDay, getUsageByWeek, getUsageByMonth, getTotalUsage,
 } from '../db';
 import { validateOrderRef } from '../middleware/validation';

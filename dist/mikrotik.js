@@ -205,7 +205,6 @@ async function removeUser(code) {
         return false;
     }
 }
-
 /** Check if MikroTik is reachable */
 async function healthCheck() {
     const { host } = config_1.config.mikrotik;

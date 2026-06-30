@@ -23,38 +23,38 @@ exports.updateVoucherSmsStatus = updateVoucherSmsStatus;
 exports.getRecentVouchers = getRecentVouchers;
 exports.logSms = logSms;
 exports.upsertActiveUser = upsertActiveUser;
-exports.findActiveUser = findActiveUser;
-exports.logWebhookEvent = logWebhookEvent;
-exports.getStats = getStats;
-exports.findStuckProcessingOrders = findStuckProcessingOrders;
-exports.cleanupOldData = cleanupOldData;
-exports.isVoucherExpired = isVoucherExpired;
-exports.deleteMacAssociation = deleteMacAssociation;
-exports.saveMacAssociation = saveMacAssociation;
-exports.findMacAssociation = findMacAssociation;
-exports.markVoucherExpired = markVoucherExpired;
-exports.reportActiveSessions = reportActiveSessions;
-exports.getConnectedUsers = getConnectedUsers;
-exports.getConnectedUsersCount = getConnectedUsersCount;
-exports.clearAllData = clearAllData;
-exports.getDailyRevenue = getDailyRevenue;
-exports.getMonthlyRevenue = getMonthlyRevenue;
-exports.getAllCustomers = getAllCustomers;
-exports.getSystemEvents = getSystemEvents;
-exports.getSetting = getSetting;
-exports.setSetting = setSetting;
-exports.getAdminPassword = getAdminPassword;
-exports.changeAdminPassword = changeAdminPassword;
-exports.addPendingDisconnect = addPendingDisconnect;
 exports.getUsageByDay = getUsageByDay;
 exports.getUsageByWeek = getUsageByWeek;
 exports.getUsageByMonth = getUsageByMonth;
 exports.getTotalUsage = getTotalUsage;
 exports.cleanupOldUsage = cleanupOldUsage;
+exports.findActiveUser = findActiveUser;
+exports.logWebhookEvent = logWebhookEvent;
+exports.addPendingDisconnect = addPendingDisconnect;
 exports.getPendingDisconnects = getPendingDisconnects;
 exports.removePendingDisconnect = removePendingDisconnect;
 exports.clearPendingDisconnects = clearPendingDisconnects;
 exports.cleanupExpiredActiveUsers = cleanupExpiredActiveUsers;
+exports.getStats = getStats;
+exports.findStuckProcessingOrders = findStuckProcessingOrders;
+exports.saveMacAssociation = saveMacAssociation;
+exports.findMacAssociation = findMacAssociation;
+exports.isVoucherExpired = isVoucherExpired;
+exports.markVoucherExpired = markVoucherExpired;
+exports.deleteMacAssociation = deleteMacAssociation;
+exports.reportActiveSessions = reportActiveSessions;
+exports.getConnectedUsers = getConnectedUsers;
+exports.getConnectedUsersCount = getConnectedUsersCount;
+exports.clearAllData = clearAllData;
+exports.getSetting = getSetting;
+exports.setSetting = setSetting;
+exports.getAdminPassword = getAdminPassword;
+exports.changeAdminPassword = changeAdminPassword;
+exports.getDailyRevenue = getDailyRevenue;
+exports.getAllCustomers = getAllCustomers;
+exports.getSystemEvents = getSystemEvents;
+exports.getMonthlyRevenue = getMonthlyRevenue;
+exports.cleanupOldData = cleanupOldData;
 /**
  * SQLite database layer for SHIMBA WiFi.
  * Uses sql.js — a pure-JavaScript SQLite implementation that requires NO native compilation.
@@ -233,12 +233,18 @@ function initTables() {
       bytes_in      INTEGER NOT NULL DEFAULT 0,
       bytes_out     INTEGER NOT NULL DEFAULT 0
     );
-  `);    // Migrate existing databases: add bytes columns if missing
-  try { db.run('ALTER TABLE active_users ADD COLUMN bytes_in INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
-  try { db.run('ALTER TABLE active_users ADD COLUMN bytes_out INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
-
-  // Usage logs table (daily per-user bandwidth tracking)
-  db.run(`
+  `);
+    // Migrate existing databases: add bytes columns if missing
+    try {
+        db.run('ALTER TABLE active_users ADD COLUMN bytes_in INTEGER NOT NULL DEFAULT 0');
+    }
+    catch { /* already exists */ }
+    try {
+        db.run('ALTER TABLE active_users ADD COLUMN bytes_out INTEGER NOT NULL DEFAULT 0');
+    }
+    catch { /* already exists */ }
+    // Usage logs table (daily per-user bandwidth tracking)
+    db.run(`
     CREATE TABLE IF NOT EXISTS daily_usage (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
       code      TEXT NOT NULL,
@@ -249,7 +255,10 @@ function initTables() {
       UNIQUE(code, date)
     );
   `);
-  try { db.run('CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(date)'); } catch { /* ignore */ }
+    try {
+        db.run('CREATE INDEX IF NOT EXISTS idx_daily_usage_date ON daily_usage(date)');
+    }
+    catch { /* ignore */ }
     db.run(`
     CREATE TABLE IF NOT EXISTS webhook_events (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -356,7 +365,6 @@ function upsertActiveUser(userName, code, mac, ip, packageName, bytesIn, bytesOu
     const isoNow = (0, utils_1.nowIso)();
     const bIn = bytesIn ?? 0;
     const bOut = bytesOut ?? 0;
-
     // Log delta bytes if this is an update with bytes data
     if (existing && (bIn > 0 || bOut > 0)) {
         const oldIn = Number(existing.bytes_in) || 0;
@@ -364,14 +372,13 @@ function upsertActiveUser(userName, code, mac, ip, packageName, bytesIn, bytesOu
         const deltaIn = Math.max(0, bIn - oldIn);
         const deltaOut = Math.max(0, bOut - oldOut);
         if (deltaIn > 0 || deltaOut > 0) {
-            const today = new Date().toISOString().slice(0, 10);
+            const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
             const phone = existing.code ? (findVoucherByCode(existing.code)?.phone || '') : '';
             run(`INSERT INTO daily_usage (code, phone, date, bytes_in, bytes_out)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(code, date) DO UPDATE SET bytes_in = bytes_in + ?, bytes_out = bytes_out + ?`, [userName, phone, today, deltaIn, deltaOut, deltaIn, deltaOut]);
         }
     }
-
     if (existing) {
         run(`UPDATE active_users SET code = ?, mac = ?, ip = ?, package_name = ?, login_at = ?, last_event = 'login', updated_at = ?, bytes_in = ?, bytes_out = ?
        WHERE user = ?`, [code, mac, ip, packageName, isoNow, now, bIn, bOut, userName]);
@@ -381,43 +388,47 @@ function upsertActiveUser(userName, code, mac, ip, packageName, bytesIn, bytesOu
        VALUES (?, ?, ?, ?, ?, ?, 'login', ?, ?, ?)`, [userName, code, mac, ip, packageName, isoNow, now, bIn, bOut]);
     }
 }
-
-/* ── Daily Usage (bandwidth tracking) ── */
-
+/** Get usage by day for the last N days */
 function getUsageByDay(days = 14) {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    return queryAll(`SELECT date, SUM(bytes_in) as bytes_in, SUM(bytes_out) as bytes_out FROM daily_usage WHERE date >= ? GROUP BY date ORDER BY date ASC`, [cutoff]).map((r) => ({
+    return queryAll(`SELECT date, SUM(bytes_in) as bytes_in, SUM(bytes_out) as bytes_out
+     FROM daily_usage WHERE date >= ?
+     GROUP BY date ORDER BY date ASC`, [cutoff]).map((r) => ({
         date: r.date,
         bytes_in: Number(r.bytes_in) || 0,
         bytes_out: Number(r.bytes_out) || 0,
     }));
 }
-
+/** Get usage by week for the last N weeks */
 function getUsageByWeek(weeks = 12) {
     const cutoff = new Date(Date.now() - weeks * 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    return queryAll(`SELECT strftime('%Y-W%W', date) as week, SUM(bytes_in) as bytes_in, SUM(bytes_out) as bytes_out FROM daily_usage WHERE date >= ? GROUP BY week ORDER BY week ASC`, [cutoff]).map((r) => ({
+    return queryAll(`SELECT strftime('%Y-W%W', date) as week, SUM(bytes_in) as bytes_in, SUM(bytes_out) as bytes_out
+     FROM daily_usage WHERE date >= ?
+     GROUP BY week ORDER BY week ASC`, [cutoff]).map((r) => ({
         week: r.week,
         bytes_in: Number(r.bytes_in) || 0,
         bytes_out: Number(r.bytes_out) || 0,
     }));
 }
-
+/** Get usage by month for the last N months */
 function getUsageByMonth(months = 12) {
     const cutoff = new Date();
     cutoff.setMonth(cutoff.getMonth() - months);
     const isoCutoff = cutoff.toISOString().slice(0, 10);
-    return queryAll(`SELECT strftime('%Y-%m', date) as month, SUM(bytes_in) as bytes_in, SUM(bytes_out) as bytes_out FROM daily_usage WHERE date >= ? GROUP BY month ORDER BY month ASC`, [isoCutoff]).map((r) => ({
+    return queryAll(`SELECT strftime('%Y-%m', date) as month, SUM(bytes_in) as bytes_in, SUM(bytes_out) as bytes_out
+     FROM daily_usage WHERE date >= ?
+     GROUP BY month ORDER BY month ASC`, [isoCutoff]).map((r) => ({
         month: r.month,
         bytes_in: Number(r.bytes_in) || 0,
         bytes_out: Number(r.bytes_out) || 0,
     }));
 }
-
+/** Get total usage all-time */
 function getTotalUsage() {
     const row = queryOne('SELECT COALESCE(SUM(bytes_in),0) as bytes_in, COALESCE(SUM(bytes_out),0) as bytes_out FROM daily_usage');
     return { bytes_in: Number(row?.bytes_in) || 0, bytes_out: Number(row?.bytes_out) || 0 };
 }
-
+/** Cleanup old usage data (older than retentionDays) */
 function cleanupOldUsage(retentionDays) {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const before = (queryOne('SELECT COUNT(*) as c FROM daily_usage')?.c) || 0;
@@ -443,28 +454,28 @@ function logWebhookEvent(orderRef, rawBody, status) {
     run('INSERT INTO webhook_events (order_reference, raw_body, status, created_at) VALUES (?, ?, ?, ?)', [orderRef, rawBody, status, (0, utils_1.nowString)()]);
 }
 /* ── Pending Disconnects (for RSC-based MikroTik removal) ── */
-
+/** Add a user code to the pending disconnect queue */
 function addPendingDisconnect(code) {
     run(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [`pending_disconnect_${code}`, code]);
     utils_1.logger.info('DB', `Added pending disconnect for ${code}`);
 }
-
+/** Get all pending disconnect codes */
 function getPendingDisconnects() {
     const rows = queryAll("SELECT key, value FROM settings WHERE key LIKE 'pending_disconnect_%'");
     return rows.map(r => r.value).filter(Boolean);
 }
-
+/** Remove a pending disconnect (after it's been processed) */
 function removePendingDisconnect(code) {
     run('DELETE FROM settings WHERE key = ?', [`pending_disconnect_${code}`]);
 }
-
+/** Clear all pending disconnects */
 function clearPendingDisconnects() {
     run("DELETE FROM settings WHERE key LIKE 'pending_disconnect_%'");
 }
-
 /**
  * Auto-remove expired voucher sessions from active_users.
  * Called periodically by the background interval.
+ * Returns count of removed sessions.
  */
 function cleanupExpiredActiveUsers() {
     const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
@@ -472,10 +483,13 @@ function cleanupExpiredActiveUsers() {
     let removed = 0;
     for (const row of activeRows) {
         const code = String(row.code || '').trim();
-        if (!code) continue;
+        if (!code)
+            continue;
         const voucher = code ? findVoucherByCode(code) : null;
         if (voucher && isVoucherExpired(voucher)) {
+            // Remove from active_users
             run('DELETE FROM active_users WHERE user = ? OR code = ?', [code, code]);
+            // Mark voucher as used
             markVoucherExpired(code);
             removed++;
             utils_1.logger.info('DB', `Auto-removed expired session: ${code}`);
@@ -486,7 +500,6 @@ function cleanupExpiredActiveUsers() {
     }
     return removed;
 }
-
 /* ── Stats ── */
 function getStats() {
     const totalOrders = (queryOne('SELECT COUNT(*) as c FROM payment_orders')?.c) || 0;
@@ -504,7 +517,6 @@ function findStuckProcessingOrders(maxAgeMs) {
     return queryAll("SELECT * FROM payment_orders WHERE status = 'PROCESSING' AND created_at < ? AND voucher_code IS NULL ORDER BY created_at ASC", [cutoff]).map(mapOrder);
 }
 /* ── MAC Associations (for auto-connect) ── */
-
 /** Save or update a MAC-to-voucher association */
 function saveMacAssociation(mac, code, packageName) {
     const normalizedMac = mac.toUpperCase();
@@ -518,7 +530,6 @@ function saveMacAssociation(mac, code, packageName) {
        VALUES (?, ?, ?, ?, ?, ?, 'associated', ?, 0, 0)`, [code.toUpperCase(), code.toUpperCase(), normalizedMac, '', packageName, (0, utils_1.nowIso)(), now]);
     }
 }
-
 /** Find a voucher code associated with a MAC address */
 function findMacAssociation(mac) {
     const normalizedMac = mac.toUpperCase();
@@ -529,7 +540,6 @@ function findMacAssociation(mac) {
     }
     return undefined;
 }
-
 /** Check if a voucher has expired based on its created_at + limit_uptime */
 function isVoucherExpired(voucher) {
     const maxDurationMs = (0, utils_1.parseLimitUptime)(voucher.limit_uptime);
@@ -539,13 +549,11 @@ function isVoucherExpired(voucher) {
     const expiryTime = createdAt + maxDurationMs;
     return Date.now() > expiryTime;
 }
-
 /** Mark voucher as used/expired in the database */
 function markVoucherExpired(code) {
     run(`UPDATE vouchers SET status = 'used', updated_at = ? WHERE code = ? AND status != 'used'`, [(0, utils_1.nowString)(), code.toUpperCase()]);
     utils_1.logger.info('DB', `Voucher ${code} marked as used (expired)`);
 }
-
 /** Delete a MAC association (e.g. when the voucher has expired) */
 function deleteMacAssociation(mac) {
     const normalizedMac = mac.toUpperCase();
@@ -555,9 +563,7 @@ function deleteMacAssociation(mac) {
         utils_1.logger.info('DB', `Deleted expired MAC association for ${normalizedMac}`);
     }
 }
-
 /* ── Report active sessions from MikroTik (called by scheduler script) ── */
-
 /**
  * Bulk-report active sessions from MikroTik hotspot active list.
  * Called by the MikroTik scheduler via POST /api/report-active-bulk.
@@ -573,9 +579,7 @@ function reportActiveSessions(sessions) {
     }
     return count;
 }
-
 /* ── Connected Users (real-time active sessions) ── */
-
 /** Get users recently active (deduplicated by MAC, any event within last 5 minutes) */
 function getConnectedUsers() {
     const freshAfter = new Date(Date.now() - 5 * 60 * 1000).toISOString();
@@ -602,14 +606,11 @@ function getConnectedUsers() {
         bytes_out: Number(r.bytes_out) || 0,
     }));
 }
-
 /** Get total count of unique connected users (uses same dedup logic as getConnectedUsers) */
 function getConnectedUsersCount() {
     return getConnectedUsers().length;
 }
-
 /* ── Clear all data (for reset) ── */
-
 function clearAllData() {
     const tables = ['payment_orders', 'vouchers', 'sms_logs', 'active_users', 'webhook_events'];
     for (const table of tables) {
@@ -617,54 +618,47 @@ function clearAllData() {
     }
     utils_1.logger.info('DB', 'All data cleared (all tables)');
 }
-
 /* ── Settings (key-value store for dynamic config) ── */
-
 /** Get a setting value by key */
 function getSetting(key) {
     const row = queryOne('SELECT value FROM settings WHERE key = ?', [key]);
     return row?.value;
 }
-
 /** Set a setting value (insert or update) */
 function setSetting(key, value) {
     run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, value]);
 }
-
 /* ── Admin Password ── */
-
 /** Get the admin password from DB (if set), otherwise undefined */
 function getAdminPassword() {
     return getSetting('admin_password');
 }
-
 /** Change the admin password (saved to DB) */
 function changeAdminPassword(newPassword) {
     setSetting('admin_password', newPassword);
     utils_1.logger.info('DB', 'Admin password changed');
 }
-
 /* ── Revenue ── */
-
 /** Get daily revenue for the last N days (for charts) */
-function getDailyRevenue(days) {
+function getDailyRevenue(days = 14) {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    const rows = queryAll(`SELECT DATE(paid_at) as day, COALESCE(SUM(amount),0) as amount, COUNT(*) as count FROM payment_orders WHERE voucher_code IS NOT NULL AND paid_at >= ? GROUP BY DATE(paid_at) ORDER BY day ASC`, [cutoff]);
+    const rows = queryAll(`SELECT DATE(paid_at) as day, COALESCE(SUM(amount),0) as amount, COUNT(*) as count
+     FROM payment_orders WHERE voucher_code IS NOT NULL AND paid_at >= ?
+     GROUP BY DATE(paid_at) ORDER BY day ASC`, [cutoff]);
     return rows.map((r) => ({
         date: r.day, amount: Number(r.amount), count: Number(r.count),
     }));
 }
-
 /** Get all customers (distinct phone numbers) */
 function getAllCustomers() {
-    return queryAll(`SELECT phone, COUNT(*) as totalOrders, COALESCE(SUM(amount),0) as totalSpent, MAX(created_at) as lastOrder FROM payment_orders GROUP BY phone ORDER BY lastOrder DESC LIMIT 200`).map((r) => ({
+    return queryAll(`SELECT phone, COUNT(*) as totalOrders, COALESCE(SUM(amount),0) as totalSpent, MAX(created_at) as lastOrder
+     FROM payment_orders GROUP BY phone ORDER BY lastOrder DESC LIMIT 200`).map((r) => ({
         phone: r.phone, totalOrders: Number(r.totalOrders),
         totalSpent: Number(r.totalSpent), lastOrder: r.lastOrder,
     }));
 }
-
 /** Get recent system events (webhook_events + voucher creations) */
-function getSystemEvents(limit) {
+function getSystemEvents(limit = 50) {
     const webhooks = queryAll('SELECT id, order_reference, status, created_at FROM webhook_events ORDER BY id DESC LIMIT ?', [limit]);
     const vouchers = queryAll("SELECT code, 'voucher_created' as event, status, created_at FROM vouchers ORDER BY id DESC LIMIT ?", [limit]);
     const events = [];
@@ -677,18 +671,19 @@ function getSystemEvents(limit) {
     events.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
     return events.slice(0, limit);
 }
-
 /** Get monthly revenue for the last N months (for charts) */
 function getMonthlyRevenue(months = 12) {
     const cutoff = new Date();
     cutoff.setMonth(cutoff.getMonth() - months);
     const isoCutoff = cutoff.toISOString();
-    const rows = queryAll(`SELECT strftime('%Y-%m', paid_at) as month, COALESCE(SUM(amount),0) as amount, COUNT(*) as count FROM payment_orders WHERE voucher_code IS NOT NULL AND paid_at >= ? GROUP BY strftime('%Y-%m', paid_at) ORDER BY month ASC`, [isoCutoff]);
+    const rows = queryAll(`SELECT strftime('%Y-%m', paid_at) as month, COALESCE(SUM(amount),0) as amount, COUNT(*) as count
+     FROM payment_orders WHERE voucher_code IS NOT NULL AND paid_at >= ?
+     GROUP BY strftime('%Y-%m', paid_at) ORDER BY month ASC`, [isoCutoff]);
     return rows.map((r) => ({
         month: r.month, amount: Number(r.amount), count: Number(r.count),
     }));
 }
-
+/* ── Cleanup ── */
 function cleanupOldData(retentionDays) {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
     // sql.js run() doesn't return changes count, so we query before/after
